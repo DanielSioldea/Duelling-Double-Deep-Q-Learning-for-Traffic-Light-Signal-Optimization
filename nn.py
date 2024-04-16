@@ -2,6 +2,7 @@
 import warnings
 warnings.filterwarnings("ignore")
 import os
+import gym
 import sys
 import optparse
 import numpy as np
@@ -88,7 +89,35 @@ class TrafficAgent:
             action = torch.argmax(actions).item()
         else:
             action = np.random.choice(self.n_actions)
-        return action 
+        return action
+    
+    def learn(self):
+        self.q_eval.optim.zero_grad()
+        if self.mem_cntr < self.batch_size:
+            return
+        max_mem = min(self.mem_cntr, self.mem_size)
+        batch = np.random.choice(max_mem, self.batch_size, replace=False)
+
+        state_batch = self.state_memory[batch]
+        action_batch = self.action_memory[batch]
+        reward_batch = self.reward_memory[batch]
+        new_state_batch = self.new_state_memory[batch]
+        done_batch = self.terminal_memory[batch]
+
+        state_batch = torch.tensor(state_batch).to(self.q_eval.device)
+        action_batch = torch.tensor(action_batch).to(self.q_eval.device)
+        reward_batch = torch.tensor(reward_batch).to(self.q_eval.device)
+        new_state_batch = torch.tensor(new_state_batch).to(self.q_eval.device)
+        done_batch = torch.tensor(done_batch).to(self.q_eval.device)
+
+        q_eval = self.q_eval.forward(state_batch).gather(1, action_batch.unsqueeze(1)).squeeze(1)
+        q_next = self.q_eval.forward(new_state_batch).max(dim=1)[0]
+        q_next[done_batch] = 0.0
+        q_target = reward_batch + self.gamma * q_next
+
+        loss = self.q_eval.loss(q_target, q_eval).to(self.q_eval.device)
+        loss.backward()
+        self.q_eval.optim.step()
 
 # OBTAIN QUEUE LENGTHS AND TIMES
 def queue_info(lane):
