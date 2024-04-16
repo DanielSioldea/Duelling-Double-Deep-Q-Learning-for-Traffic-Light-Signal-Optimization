@@ -32,16 +32,6 @@ def get_options():
     options, args = optParser.parse_args()
     return options
 
-# ashfsa
-# SELECT GPU OR CPU DEPENDING ON WHAT IS AVAILABLE
-device = ("cuda" 
-          if torch.cuda.is_available()
-          else "mps"
-          if torch.backends.mps.is_available()
-          else "cpu")
-
-print(f"Network is using {device} device.")
-
 ## NEURAL NETWORK
 class TrafficController(nn.Module):
     def __init__(self, input_size, hidden1_size, hidden2_size, output_size):
@@ -61,6 +51,15 @@ class TrafficController(nn.Module):
         # self.optim = optim.RMSprop(self.parameters())
         # self.optim = optim.SGD(self.parameters())
         self.loss = nn.MSELoss()
+        # SELECT GPU OR CPU DEPENDING ON WHAT IS AVAILABLE
+        self.device = ("cuda" 
+          if torch.cuda.is_available()
+          else "mps"
+          if torch.backends.mps.is_available()
+          else "cpu")
+        self.to(self.device)
+
+        print(f"Network is using {self.device} device.")
     
     # DEFINE HOW NN FEEDS FORWARD INTO LAYERS
     def forward(self, x):
@@ -71,7 +70,7 @@ class TrafficController(nn.Module):
     
 ## DEFINE AGENT CLASS FOR LEARNING
 class TrafficAgent:
-    def __init__(self, gamma, epsilon, lr, input_size, hidden1_size, hidden2_size, n_actions):
+    def __init__(self, gamma, epsilon, lr, input_size, hidden1_size, hidden2_size, n_actions, max_memory_size, batch_size):
         self.gamma = gamma
         self.epsilon = epsilon
         self.lr = lr
@@ -79,6 +78,10 @@ class TrafficAgent:
         self.hidden1_size = hidden1_size
         self.hidden2_size = hidden2_size
         self.n_actions = n_actions
+        max_memory_size = 100000
+        self.mem_size = max_memory_size
+        self.mem_cntr = 0
+        self.batch_size = batch_size
 
         self.q_eval = TrafficController(self.input_size, self.hidden1_size, self.hidden2_size, self.n_actions)
 
@@ -175,7 +178,7 @@ def main():
     hidden1_size = 16
     hidden2_size = 8
     output_size = 2 * num_junctions
-    epochs = 100
+    epochs = 500
     
     # CREATE MODEL
     model = TrafficController(input_size, hidden1_size, hidden2_size, output_size)
