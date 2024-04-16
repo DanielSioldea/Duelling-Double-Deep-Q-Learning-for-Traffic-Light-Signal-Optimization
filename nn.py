@@ -22,8 +22,6 @@ from sumolib import checkBinary
 import traci
 import traci.constants as tc
 
-# sev is a stinky boii and likes men (this is a test commit) (this is a test commit 2) 
-# bing bong bing bong 
 
 # OPTIONS (CUS WHY NOT)
 def get_options():
