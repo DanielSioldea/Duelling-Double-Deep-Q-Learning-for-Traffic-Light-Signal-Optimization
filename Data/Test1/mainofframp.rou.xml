@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- generated on 2024-03-27 15:45:22 by Eclipse SUMO netedit Version 1.19.0
+-->
+
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <!-- Vehicles, persons and containers (sorted by depart) -->
+    <flow id="f_0" begin="0.00" end="3600.00" vehsPerHour="1800">
+        <route edges="32971623 11305361 315703118 315703119#0 1005107475 -156268076#2 -156268076#1"/>
+    </flow>
+    <flow id="f_1" begin="0.00" end="3600.00" vehsPerHour="1800">
+        <route edges="32971623 11305361 315703118 315703119#0 840329608#1 840329606#0 840329606#1 840329606#2"/>
+    </flow>
+    <flow id="f_2" begin="0.00" end="3600.00" vehsPerHour="2500">
+        <route edges="32971623 392145824 392145823 232593746"/>
+    </flow>
+    <flow id="f_3" begin="0.00" end="3600.00" vehsPerHour="2500">
+        <route edges="-840329606#2 -840329606#1 -840329606#0 1005107471#0 1005107471#1 1005107475 -156268076#2 -156268076#1"/>
+    </flow>
+    <flow id="f_4" begin="0.00" end="3600.00" vehsPerHour="2500">
+        <route edges="156268076#1 156268076#2 150872239 840329608#1 840329606#0 840329606#1 840329606#2"/>
+    </flow>
+</routes>
