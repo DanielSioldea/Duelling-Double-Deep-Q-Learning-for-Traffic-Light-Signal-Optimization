@@ -36,6 +36,11 @@ def get_options():
 class TrafficController(nn.Module):
     def __init__(self, input_size, hidden1_size, hidden2_size, output_size):
         super(TrafficController, self).__init__()
+        self.input_size = input_size
+        self.hidden1_size = hidden1_size
+        self.hidden2_size = hidden2_size
+        self.output_size = output_size
+
         #self.flatten = nn.Flatten()
         self.hidden1 = nn.Linear(input_size, hidden1_size)      # FIRST HIDDEN LAYER HAS 12 NEURONS
         self.activ1 = nn.ReLU()                                 # ReLU ACTIVATION FUNCTION
@@ -46,17 +51,9 @@ class TrafficController(nn.Module):
 
         # OPTIMIZER AND LOSS FUNCTION (TEST DIFFERENT OPTIONS)
         self.optim = optim.Adam(self.parameters(), lr=0.001)
-        # self.optim = optim.Adadelta(self.parameters())
-        # self.optim = optim.ASGD(self.parameters())
-        # self.optim = optim.RMSprop(self.parameters())
-        # self.optim = optim.SGD(self.parameters())
         self.loss = nn.MSELoss()
         # SELECT GPU OR CPU DEPENDING ON WHAT IS AVAILABLE
-        self.device = ("cuda" 
-          if torch.cuda.is_available()
-          else "mps"
-          if torch.backends.mps.is_available()
-          else "cpu")
+        self.device = ("cuda" if torch.cuda.is_available() else "cpu")
         self.to(self.device)
 
         print(f"Network is using {self.device} device.")
@@ -125,15 +122,19 @@ class TrafficAgent:
 # OBTAIN QUEUE LENGTHS AND TIMES
 def queue_info(lane):
     queue_info = []
+    queue_length = 0
+    queue_time = 0
     total_queue_len = 0
     total_queue_time = 0
     for i in lane:
         # queue_length = traci.junction.getParameter(i, "waitingCount")
         queue_length = traci.lane.getLastStepHaltingNumber(i)
-        print(f"Queue length: {queue_length} for lane {i}")
+        # if queue_length > 0:
+        #     print(f"Queue length: {queue_length} for lane {i}")
         # queue_time = traci.junction.getParameter(i, "waitingTime")
         queue_time = traci.lane.getWaitingTime(i)
-        print(f"Queue time: {queue_time} for lane {i}")
+        # if queue_time > 0:
+        #     print(f"Queue time: {queue_time} for lane {i}")
         if queue_length:
             queue_length_int = int(queue_length)
         else:
@@ -146,6 +147,45 @@ def queue_info(lane):
         total_queue_len += queue_length_int
         total_queue_time += queue_time_int
     return queue_info, total_queue_len, total_queue_time
+
+# def get_edge_length(edge_id):
+#     lanes = traci.edge.getLaneNumber(edge_id)
+#     length = sum(traci.lane.getLength(f"{edge_id}_{i}") for i in range(lanes))
+#     return length
+
+# def num_vehicles(edges):
+#     num_vehicles = dict()
+#     for i in edges:
+#         num_vehicles[i] = 0
+#         # lane_length = traci.lane.getLength(i)
+#         # edge_length = get_edge_length(i)
+#         for j in traci.edge.getLastStepVehicleIDs(i):
+#             vehicle_pos = traci.vehicle.getLanePosition(j)
+#             lane_length = traci.lane.getLength(traci.vehicle.getLaneID(j))
+#             if lane_length - vehicle_pos <= 100 and traci.vehicle.getSpeed(j) == 0:
+#             # if edge_length - traci.vehicle.getLanePosition(j) <= 50:
+#                 num_vehicles[i] += 1
+#         print(f"Number of vehicles: {num_vehicles[i]} in edge {i}")
+#         # print(f"The length of edge {i} is {edge_length}")
+#     return num_vehicles
+
+# def num_vehicles(edges):
+#     num_vehicles = dict()
+#     for i in edges:
+#         num_vehicles[i] = traci.edge.getLastStepHaltingNumber(i)
+#         print(f"Number of vehicles: {num_vehicles[i]} in edge {i}")
+#     return num_vehicles
+
+def get_vehicle_number(lanes):
+    vehicles_per_lane = dict()
+    for i in lanes:
+        vehicles_per_lane[i] = 0
+        for j in traci.lane.getLastStepVehicleIDs(i):
+            if traci.vehicle.getSpeed(j) == 0:
+                vehicles_per_lane[i] += 1
+        print(f"Number of vehicles: {vehicles_per_lane[i]} in lane {i}")
+    return vehicles_per_lane
+
 
 # ADJUST TRAFFIC LIGHTS
 def adjust_traffic_light(junctions, junc_time, junc_state):
@@ -166,10 +206,16 @@ def main():
     # DEFINE JUNCTIONS AND LANES
     junctions = traci.trafficlight.getIDList()
     print(f"Junctions: {junctions}")
+    # num_junctions = list(range(len(junctions)))
     num_junctions = len(junctions)
+    print(f"Number of junctions: {num_junctions}")
     lanes = traci.lane.getIDList()
     num_lanes = len(lanes)
     print(f"Lanes: {lanes}")
+    # edges = traci.edge.getIDList()
+    edges = [edge for edge in traci.edge.getIDList() if not edge.startswith(':')]
+    num_edges = len(edges)
+    print(f"Edges: {edges}")
     end_time = traci.simulation.getEndTime()
     # print(f"End time: {end_time}")
     
@@ -178,7 +224,7 @@ def main():
     hidden1_size = 16
     hidden2_size = 8
     output_size = 2 * num_junctions
-    epochs = 500
+    epochs = 1
     
     # CREATE MODEL
     model = TrafficController(input_size, hidden1_size, hidden2_size, output_size)
@@ -193,8 +239,9 @@ def main():
             # SIMULATION STEP
             traci.simulationStep()
             step += 1
+            # num_vehicles(edges)
             print(f"Step {step}")
-            # print(f"Step {step}")
+            get_vehicle_number(lanes)
             # GET QUEUE LENGTHS AND TIMES
             queue_data, total_length, total_time = queue_info(lanes)
             # print(f"Queue data: {queue_data}")
