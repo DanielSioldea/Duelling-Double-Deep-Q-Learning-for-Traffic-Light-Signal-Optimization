@@ -192,6 +192,7 @@ def adjust_traffic_light(junctions, junc_time, junc_state):
     for i, junction in enumerate(junctions):
         traci.trafficlight.setRedYellowGreenState(junction, junc_state[i])
         traci.trafficlight.setPhaseDuration(junction, junc_time[i])
+        print(f"Junction {junction} state: {junc_state[i]}, time: {junc_time[i]} at junction {i}")
 
 # MAIN FUNCTION
 def main():
@@ -241,7 +242,7 @@ def main():
             step += 1
             # num_vehicles(edges)
             print(f"Step {step}")
-            get_vehicle_number(lanes)
+            # get_vehicle_number(lanes)
             # GET QUEUE LENGTHS AND TIMES
             queue_data, total_length, total_time = queue_info(lanes)
             # print(f"Queue data: {queue_data}")
