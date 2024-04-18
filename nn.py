@@ -83,22 +83,14 @@ def queue_info(lane):
 #         # print(f"The length of edge {i} is {edge_length}")
 #     return num_vehicles
 
-# def num_vehicles(edges):
-#     num_vehicles = dict()
-#     for i in edges:
-#         num_vehicles[i] = traci.edge.getLastStepHaltingNumber(i)
-#         print(f"Number of vehicles: {num_vehicles[i]} in edge {i}")
-#     return num_vehicles
-
-def get_vehicle_number(lanes):
-    vehicles_per_lane = dict()
-    for i in lanes:
-        vehicles_per_lane[i] = 0
-        for j in traci.lane.getLastStepVehicleIDs(i):
-            if traci.vehicle.getSpeed(j) == 0:
-                vehicles_per_lane[i] += 1
-        print(f"Number of vehicles: {vehicles_per_lane[i]} in lane {i}")
-    return vehicles_per_lane
+# WORKING FUNCTION TO GET NUMBER OF VEHICLES STOPPED IN EACH EDGE
+def get_vehicle_number(edges):
+    vehicles_per_edge = dict()
+    for i in edges:
+        vehicles_per_edge[i] = 0
+        vehicles_per_edge[i] = traci.edge.getLastStepHaltingNumber(i)
+        print(f"Number of vehicles: {vehicles_per_edge[i]} in edge {i}")
+    return vehicles_per_edge
 
 
 # ADJUST TRAFFIC LIGHTS
@@ -230,7 +222,7 @@ def main():
     options = get_options()
     avg_losses = []
     # START SUMO
-    sumoBinary = checkBinary('sumo')
+    sumoBinary = checkBinary('sumo-gui')
     # traci.start([sumoBinary, "-c", "Data\Test1\mainofframp.sumocfg"])
     traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
     
@@ -240,10 +232,10 @@ def main():
     # num_junctions = list(range(len(junctions)))
     num_junctions = len(junctions)
     print(f"Number of junctions: {num_junctions}")
-    lanes = traci.lane.getIDList()
+    lanes = [lane for lane in traci.lane.getIDList() if not lane.startswith(':')]
     num_lanes = len(lanes)
     # print(num_lanes)
-    # print(f"Lanes: {lanes}")
+    print(f"Lanes: {lanes}")
     # edges = traci.edge.getIDList()
     edges = [edge for edge in traci.edge.getIDList() if not edge.startswith(':')]
     num_edges = len(edges)
@@ -273,6 +265,11 @@ def main():
         step = 0
         total_loss = 0
         num_iters = 0
+
+        prev_queue_time = dict()
+        prev_queue_length = dict()
+        light_times = dict()
+
         light = traci.trafficlight.getIDList() 
         for l in light:
             light_phase_test = traci.trafficlight.getRedYellowGreenState(l)
@@ -286,15 +283,16 @@ def main():
         while step < (end_time + 5):
             # SIMULATION STEP
             traci.simulationStep()
+            get_vehicle_number(edges)
             for l in light:
                 light_time_test = traci.trafficlight.getPhaseDuration(l)
                 decc = light_time_test - 5
-                print(decc)
+                # print(decc)
                 # step += 1
                 # num_vehicles(edges)
-                print(f"Light time test: {light_time_test} for light {l}")
-                traci.trafficlight.setPhaseDuration(l, decc)
-                # get_vehicle_number(lanes)
+                # print(f"Light time test: {light_time_test} for light {l}")
+                # traci.trafficlight.setPhaseDuration(l, decc)
+                
                 # GET QUEUE LENGTHS AND TIMES
                 queue_data, total_length, total_time = queue_info(lanes)
                 # print(f"Queue data: {queue_data}")
