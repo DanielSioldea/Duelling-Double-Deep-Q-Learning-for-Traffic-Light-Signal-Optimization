@@ -265,59 +265,73 @@ def main():
     # TRAIN MODEL
 
     for epoch in range(epochs):
+        # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
+        light_choice = [
+            ["rrrryyyyrrrryyyy", "rrrrGGGgrrrrGGGg"],
+            ["yyyyrrrryyyyrrrr", "GGGgrrrrGGGgrrrr"] 
+        ]
         step = 0
         total_loss = 0
         num_iters = 0
-        light = traci.trafficlight.getIDList()
+        light = traci.trafficlight.getIDList() 
         for l in light:
-            light_test = traci.trafficlight.getAllProgramLogics(l)
             light_phase_test = traci.trafficlight.getRedYellowGreenState(l)
-            light_time_test = traci.trafficlight.getPhaseDuration(l)
+            # light_time_test = traci.trafficlight.getPhaseDuration(l)
+            # decc = light_time_test - 5
             # print(f"Light test: {light_test} for light {l}")
-            print(f"Light phase test: {light_phase_test} for light {l}")
-            print(f"Light time test: {light_time_test} for light {l}")
+            # print(f"Light phase test: {light_phase_test} for light {l}")
+            # print(f"Light time test: {light_time_test} for light {l}")
+            # traci.trafficlight.setRedYellowGreenState(l, light_choice[0][0])
+            # traci.trafficlight.setPhaseDuration(l, decc)
         while step < (end_time + 5):
             # SIMULATION STEP
             traci.simulationStep()
-            step += 1
-            # num_vehicles(edges)
-            # print(f"Step {step}")
-            # get_vehicle_number(lanes)
-            # GET QUEUE LENGTHS AND TIMES
-            queue_data, total_length, total_time = queue_info(lanes)
-            # print(f"Queue data: {queue_data}")
+            for l in light:
+                light_time_test = traci.trafficlight.getPhaseDuration(l)
+                decc = light_time_test - 5
+                print(decc)
+                # step += 1
+                # num_vehicles(edges)
+                print(f"Light time test: {light_time_test} for light {l}")
+                traci.trafficlight.setPhaseDuration(l, decc)
+                # get_vehicle_number(lanes)
+                # GET QUEUE LENGTHS AND TIMES
+                queue_data, total_length, total_time = queue_info(lanes)
+                # print(f"Queue data: {queue_data}")
         
-            input_data = torch.tensor(sum(queue_data, []), dtype=torch.float32)
-            # print(f"Input data: {input_data}")
+                input_data = torch.tensor(sum(queue_data, []), dtype=torch.float32)
+                # print(f"Input data: {input_data}")
 
-            # FORWARD PASS
-            output_data = model(input_data)
-            # print(f"Output data: {output_data}")
+                # FORWARD PASS
+                output_data = model(input_data)
+                # print(f"Output data: {output_data}")
 
-            # DEFINE OUTPUTS
-            junc_state = output_data[:output_size // 2]
-            junc_time = output_data[output_size // 2:]
-            # print(f"Junction State: {junc_state}")
-            # print(f"Junction Time: {junc_time}")
+                # DEFINE OUTPUTS
+                junc_state = output_data[:output_size // 2]
+                junc_time = output_data[output_size // 2:]
+                # print(f"Junction State: {junc_state}")
+                # print(f"Junction Time: {junc_time}")
             
 
-            # ADJUST TRAFFIC LIGHTS
-            adjust_traffic_light(junctions, junc_time, junc_state)
+                # ADJUST TRAFFIC LIGHTS
+                # adjust_traffic_light(junctions, junc_time, junc_state)
 
-            # GET REWARD
-            # reward = -1
-            reward = -total_time -1 * total_length
+                # GET REWARD
+                # reward = -1
+                reward = -total_time -1 * total_length
 
-            # CALCULATE LOSS
-            loss = model.loss(output_data, torch.tensor([reward], dtype=torch.float32))
+                # CALCULATE LOSS
+                loss = model.loss(output_data, torch.tensor([reward], dtype=torch.float32))
 
-            # BACKWARD PASS AND OPTIMIZE
-            model.optim.zero_grad()
-            loss.backward()
-            model.optim.step()
+                # BACKWARD PASS AND OPTIMIZE
+                model.optim.zero_grad()
+                loss.backward()
+                model.optim.step()
 
-            total_loss += loss.item()
-            num_iters += 1
+                total_loss += loss.item()
+                num_iters += 1
+            step += 1
+            print(f"Step {step}")
 
             current_state = traci.trafficlight.getRedYellowGreenState(junctions[0])
             # print(f"Current state: {current_state}")
@@ -338,7 +352,7 @@ def main():
     plt.ylabel("Loss")
     plt.title("Training Loss")
     plt.show()
-    plt.savefig("Figures\TrainingLoss-mainofframp-100epochs.png")
+    # plt.savefig("Figures\TrainingLoss-mainofframp-100epochs.png")
 
 if __name__ == "__main__":
     main()
