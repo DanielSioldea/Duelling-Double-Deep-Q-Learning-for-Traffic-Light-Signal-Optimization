@@ -2,7 +2,6 @@
 import warnings
 warnings.filterwarnings("ignore")
 import os
-import gym
 import sys
 import optparse
 import numpy as np
@@ -33,64 +32,27 @@ def get_options():
     options, args = optParser.parse_args()
     return options
 
-# OBTAIN QUEUE LENGTHS AND TIMES
-def queue_info(lane):
-    queue_info = []
-    queue_length = 0
-    queue_time = 0
-    total_queue_len = 0
-    total_queue_time = 0
-    for i in lane:
-        # queue_length = traci.junction.getParameter(i, "waitingCount")
-        queue_length = traci.lane.getLastStepHaltingNumber(i)
-        # if queue_length > 0:
-        #     print(f"Queue length: {queue_length} for lane {i}")
-        # queue_time = traci.junction.getParameter(i, "waitingTime")
-        queue_time = traci.lane.getWaitingTime(i)
-        # if queue_time > 0:
-        #     print(f"Queue time: {queue_time} for lane {i}")
-        if queue_length:
-            queue_length_int = int(queue_length)
-        else:
-            queue_length_int = 0
-        if queue_time:
-            queue_time_int = int(queue_time)
-        else:
-            queue_time_int = 0
-        queue_info.append([queue_length_int, queue_time_int])
-        total_queue_len += queue_length_int
-        total_queue_time += queue_time_int
-    return queue_info, total_queue_len, total_queue_time
-
-# def get_edge_length(edge_id):
-#     lanes = traci.edge.getLaneNumber(edge_id)
-#     length = sum(traci.lane.getLength(f"{edge_id}_{i}") for i in range(lanes))
-#     return length
-
-# def num_vehicles(edges):
-#     num_vehicles = dict()
-#     for i in edges:
-#         num_vehicles[i] = 0
-#         # lane_length = traci.lane.getLength(i)
-#         # edge_length = get_edge_length(i)
-#         for j in traci.edge.getLastStepVehicleIDs(i):
-#             vehicle_pos = traci.vehicle.getLanePosition(j)
-#             lane_length = traci.lane.getLength(traci.vehicle.getLaneID(j))
-#             if lane_length - vehicle_pos <= 100 and traci.vehicle.getSpeed(j) == 0:
-#             # if edge_length - traci.vehicle.getLanePosition(j) <= 50:
-#                 num_vehicles[i] += 1
-#         print(f"Number of vehicles: {num_vehicles[i]} in edge {i}")
-#         # print(f"The length of edge {i} is {edge_length}")
-#     return num_vehicles
-
-# WORKING FUNCTION TO GET NUMBER OF VEHICLES STOPPED IN EACH EDGE
-def get_vehicle_number(edges):
+# FUNCTION TO GET NUMBER OF VEHICLES STOPPED, MAX VEH WAITING TIME, AND SUM OF WAITING TIME IN EACH EDGE
+def queue_info(edges):
     vehicles_per_edge = dict()
+    vehicle_id = dict()
+    vehicle_wait_time = dict()
+    max_wait_time = dict()
     for i in edges:
         vehicles_per_edge[i] = 0
+        vehicle_wait_time[i] = 0
+        max_wait_time[i] = 0
         vehicles_per_edge[i] = traci.edge.getLastStepHaltingNumber(i)
-        print(f"Number of vehicles: {vehicles_per_edge[i]} in edge {i}")
-    return vehicles_per_edge
+        vehicle_id[i] = traci.edge.getLastStepVehicleIDs(i)
+        for v in vehicle_id[i]:
+            current_wait_time = traci.vehicle.getWaitingTime(v)
+            vehicle_wait_time[i] += current_wait_time
+            if current_wait_time > max_wait_time[i]:
+                max_wait_time[i] = current_wait_time
+        # print(f"Number of vehicles: {vehicles_per_edge[i]} in edge {i}")
+        # print(f"Total vehicle wait time: {vehicle_wait_time[i]} in edge {i}")
+        # print(f"Max vehicle wait time: {max_wait_time[i]} in edge {i}")
+    return vehicles_per_edge, vehicle_wait_time, max_wait_time
 
 
 # ADJUST TRAFFIC LIGHTS
@@ -105,14 +67,10 @@ class TrafficController(nn.Module):
     def __init__(self, input_size, lr, hidden1_size, hidden2_size, output_size):
         super(TrafficController, self).__init__()
         self.input_size = input_size
+        self.lr = lr
         self.hidden1_size = hidden1_size
         self.hidden2_size = hidden2_size
         self.output_size = output_size
-
-        # print(f"input_size: {self.input_size}, type: {type(self.input_size)}")
-        # print(f"hidden1_size: {self.hidden1_size}, type: {type(self.hidden1_size)}")
-        # print(f"hidden2_size: {self.hidden2_size}, type: {type(self.hidden2_size)}")
-        # print(f"output_size: {self.output_size}, type: {type(self.output_size)}")
 
         #self.flatten = nn.Flatten()
         self.hidden1 = nn.Linear(self.input_size, self.hidden1_size)      # FIRST HIDDEN LAYER HAS 12 NEURONS
@@ -123,7 +81,7 @@ class TrafficController(nn.Module):
         # self.activ_out = nn.Sigmoid()                           # SIGMOID ACTIVATION FUNCTION (ENSURES OUTPUT BETWEEN 0 AND 1)
 
         # OPTIMIZER AND LOSS FUNCTION (TEST DIFFERENT OPTIONS)
-        self.optim = optim.Adam(self.parameters(), lr=lr)
+        self.optim = optim.Adam(self.parameters(), lr = self.lr)
         self.loss = nn.MSELoss()
         # SELECT GPU OR CPU DEPENDING ON WHAT IS AVAILABLE
         self.device = ("cuda" if torch.cuda.is_available() else "cpu")
@@ -143,7 +101,7 @@ class TrafficController(nn.Module):
     
 ## DEFINE AGENT CLASS FOR LEARNING
 class TrafficAgent:
-    def __init__(self, gamma, epsilon, lr, input_size, hidden1_size, hidden2_size, n_actions, max_memory_size, batch_size, eps_end=0.01, eps_dec=5e-4):
+    def __init__(self, gamma, epsilon, lr, input_size, hidden1_size, hidden2_size, output_size, max_memory_size, batch_size, eps_end=0.01, eps_dec=5e-4):
         self.gamma = gamma
         self.epsilon = epsilon
         self.eps_min = eps_end
@@ -152,13 +110,14 @@ class TrafficAgent:
         self.input_size = input_size
         self.hidden1_size = hidden1_size
         self.hidden2_size = hidden2_size
-        self.action_space = [i for i in range(n_actions)]
+        self.output_size = output_size
+        self.action_space = [i for i in range(output_size)]
         max_memory_size = 100000
         self.mem_size = max_memory_size
         self.mem_cntr = 0
         self.batch_size = batch_size
 
-        self.q_eval = TrafficController(self.lr, self.input_size, self.hidden1_size, self.hidden2_size, output_size=n_actions)
+        self.q_eval = TrafficController(self.lr, self.input_size, self.hidden1_size, self.hidden2_size, self.output_size)
 
         self.state_memory = np.zeros((self.mem_size, self.input_size), dtype=np.float32)
         self.new_state_memory = np.zeros((self.mem_size, self.input_size), dtype=np.float32)
@@ -206,9 +165,9 @@ class TrafficAgent:
 
         # q_eval = self.q_eval.forward(state_batch).gather(1, action_batch.unsqueeze(1)).squeeze(1)
         q_eval = self.q_eval.forward(state_batch)[batch_index, action_batch]
-        q_next = self.q_eval.forward(new_state_batch).max(dim=1)[0]
+        q_next = self.q_eval.forward(new_state_batch)
         q_next[done_batch] = 0.0
-        q_target = reward_batch + self.gamma * q_next
+        q_target = reward_batch + self.gamma * torch.max(q_next, dim=1)[0]
 
         loss = self.q_eval.loss(q_target, q_eval).to(self.q_eval.device)
         loss.backward()
@@ -244,7 +203,7 @@ def main():
     # print(f"End time: {end_time}")
     
     # DEFINE NETWORK PARAMETERS
-    input_size = 2 * num_lanes
+    input_size = 2 * num_edges
     hidden1_size = 16
     hidden2_size = 8
     output_size = 2 * num_junctions
@@ -270,8 +229,8 @@ def main():
         prev_queue_length = dict()
         light_times = dict()
 
-        light = traci.trafficlight.getIDList() 
-        for l in light:
+        lights = traci.trafficlight.getIDList() 
+        for l in lights:
             light_phase_test = traci.trafficlight.getRedYellowGreenState(l)
             # light_time_test = traci.trafficlight.getPhaseDuration(l)
             # decc = light_time_test - 5
@@ -283,8 +242,9 @@ def main():
         while step < (end_time + 5):
             # SIMULATION STEP
             traci.simulationStep()
-            get_vehicle_number(edges)
-            for l in light:
+            print(f"Step {step}")
+            queue_info(edges)
+            for l in lights:
                 light_time_test = traci.trafficlight.getPhaseDuration(l)
                 decc = light_time_test - 5
                 # print(decc)
@@ -294,19 +254,19 @@ def main():
                 # traci.trafficlight.setPhaseDuration(l, decc)
                 
                 # GET QUEUE LENGTHS AND TIMES
-                queue_data, total_length, total_time = queue_info(lanes)
+                # queue_data, total_length, total_time = queue_info(edges)
                 # print(f"Queue data: {queue_data}")
         
-                input_data = torch.tensor(sum(queue_data, []), dtype=torch.float32)
+                # input_data = torch.tensor(sum(queue_data, []), dtype=torch.float32)
                 # print(f"Input data: {input_data}")
 
                 # FORWARD PASS
-                output_data = model(input_data)
+                # output_data = model(input_data)
                 # print(f"Output data: {output_data}")
 
                 # DEFINE OUTPUTS
-                junc_state = output_data[:output_size // 2]
-                junc_time = output_data[output_size // 2:]
+                # junc_state = output_data[:output_size // 2]
+                # junc_time = output_data[output_size // 2:]
                 # print(f"Junction State: {junc_state}")
                 # print(f"Junction Time: {junc_time}")
             
@@ -316,20 +276,20 @@ def main():
 
                 # GET REWARD
                 # reward = -1
-                reward = -total_time -1 * total_length
+                # reward = -total_time -1 * total_length
 
                 # CALCULATE LOSS
-                loss = model.loss(output_data, torch.tensor([reward], dtype=torch.float32))
+                # loss = model.loss(output_data, torch.tensor([reward], dtype=torch.float32))
 
                 # BACKWARD PASS AND OPTIMIZE
                 model.optim.zero_grad()
-                loss.backward()
+                # loss.backward()
                 model.optim.step()
 
-                total_loss += loss.item()
+                # total_loss += loss.item()
                 num_iters += 1
             step += 1
-            print(f"Step {step}")
+            
 
             current_state = traci.trafficlight.getRedYellowGreenState(junctions[0])
             # print(f"Current state: {current_state}")
@@ -339,7 +299,7 @@ def main():
 
             # PRINT LOSS
         if (epoch + 1) % 1 == 0:
-            print(f"Epoch {epoch + 1}/{epochs}, Loss: {loss.item()}")
+            print(f"Epoch {epoch + 1}/{epochs}")
 
         # CLOSE SUMO
     traci.close()
