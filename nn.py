@@ -2,6 +2,7 @@
 import warnings
 warnings.filterwarnings("ignore")
 import os
+import gym
 import sys
 import optparse
 import numpy as np
@@ -49,18 +50,13 @@ def queue_info(edges):
             vehicle_wait_time[i] += current_wait_time
             if current_wait_time > max_wait_time[i]:
                 max_wait_time[i] = current_wait_time
-        # print(f"Number of vehicles: {vehicles_per_edge[i]} in edge {i}")
-        # print(f"Total vehicle wait time: {vehicle_wait_time[i]} in edge {i}")
-        # print(f"Max vehicle wait time: {max_wait_time[i]} in edge {i}")
     return vehicles_per_edge, vehicle_wait_time, max_wait_time
 
 
 # ADJUST TRAFFIC LIGHTS
-def adjust_traffic_light(junctions, junc_time, junc_state):
-    for i, junction in enumerate(junctions):
-        traci.trafficlight.setRedYellowGreenState(junction, junc_state[i])
-        traci.trafficlight.setPhaseDuration(junction, junc_time[i])
-        # print(f"Junction {junction} state: {junc_state[i]}, time: {junc_time[i]} at junction {i}")
+def adjust_traffic_light(junction, junc_time, junc_state):
+    traci.trafficlight.setRedYellowGreenState(junction, junc_state)
+    traci.trafficlight.setPhaseDuration(junction, junc_time)
 
 ## NEURAL NETWORK
 class TrafficController(nn.Module):
@@ -74,11 +70,11 @@ class TrafficController(nn.Module):
 
         #self.flatten = nn.Flatten()
         self.hidden1 = nn.Linear(self.input_size, self.hidden1_size)      # FIRST HIDDEN LAYER HAS 12 NEURONS
-        # self.activ1 = nn.ReLU()                                 # ReLU ACTIVATION FUNCTION
+        # self.activ1 = nn.ReLU()                                         # ReLU ACTIVATION FUNCTION
         self.hidden2 = nn.Linear(self.hidden1_size, self.hidden2_size)    # SECOND HIDDEN LAYER HAS 8 NEURONS
-        # self.activ2 = nn.ReLU()                                 # ReLU ACTIVATION FUNCTION
+        # self.activ2 = nn.ReLU()                                         # ReLU ACTIVATION FUNCTION
         self.output = nn.Linear(self.hidden2_size, self.output_size)      # OUTPUT LAYER HAS ONE NEURON
-        # self.activ_out = nn.Sigmoid()                           # SIGMOID ACTIVATION FUNCTION (ENSURES OUTPUT BETWEEN 0 AND 1)
+        # self.activ_out = nn.Sigmoid()                                   # SIGMOID ACTIVATION FUNCTION (ENSURES OUTPUT BETWEEN 0 AND 1)
 
         # OPTIMIZER AND LOSS FUNCTION (TEST DIFFERENT OPTIONS)
         self.optim = optim.Adam(self.parameters(), lr = self.lr)
@@ -91,9 +87,6 @@ class TrafficController(nn.Module):
     
     # DEFINE HOW NN FEEDS FORWARD INTO LAYERS
     def forward(self, x):
-        # x = self.activ1(self.hidden1(x))
-        # x = self.activ2(self.hidden2(x))
-        # x = self.activ_out(self.output(x))
         x = F.relu(self.hidden1(x))
         x = F.relu(self.hidden2(x))
         actions = self.output(x)
@@ -178,48 +171,39 @@ class TrafficAgent:
 # MAIN FUNCTION
 def main():
     # GET OPTIONS
-    options = get_options()
     avg_losses = []
     # START SUMO
-    sumoBinary = checkBinary('sumo-gui')
-    # traci.start([sumoBinary, "-c", "Data\Test1\mainofframp.sumocfg"])
+    sumoBinary = checkBinary('sumo')
     traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
+
+    agent = TrafficAgent(gamma=0.99, epsilon=1.0, lr=0.001, input_size=input_size, hidden1_size=256, hidden2_size=256, output_size=output, batch_size=64)
+    # DEFINE NETWORK PARAMETERS
+    scores, eps_history = [], []
+    input_size = 2 * num_edges
+    output = 2 * num_junctions
+    epochs = 100
     
     # DEFINE JUNCTIONS AND LANES
     junctions = traci.trafficlight.getIDList()
-    print(f"Junctions: {junctions}")
+    # print(f"Junctions: {junctions}")
     # num_junctions = list(range(len(junctions)))
     num_junctions = len(junctions)
-    print(f"Number of junctions: {num_junctions}")
-    lanes = [lane for lane in traci.lane.getIDList() if not lane.startswith(':')]
-    num_lanes = len(lanes)
-    # print(num_lanes)
-    print(f"Lanes: {lanes}")
+    # print(f"Number of junctions: {num_junctions}")
     # edges = traci.edge.getIDList()
     edges = [edge for edge in traci.edge.getIDList() if not edge.startswith(':')]
     num_edges = len(edges)
     # print(f"Edges: {edges}")
     end_time = traci.simulation.getEndTime()
     # print(f"End time: {end_time}")
-    
-    # DEFINE NETWORK PARAMETERS
-    input_size = 2 * num_edges
-    hidden1_size = 16
-    hidden2_size = 8
-    output_size = 2 * num_junctions
-    epochs = 1
-    lr = 0.001
-    
-    # CREATE MODEL
-    model = TrafficController(input_size, lr, hidden1_size, hidden2_size, output_size)
 
     # TRAIN MODEL
 
     for epoch in range(epochs):
+        traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
         # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
         light_choice = [
-            ["rrrryyyyrrrryyyy", "rrrrGGGgrrrrGGGg"],
-            ["yyyyrrrryyyyrrrr", "GGGgrrrrGGGgrrrr"] 
+            ["rrrrGGGgrrrrGGGg", "rrrryyyyrrrryyyy"],
+            ["GGGgrrrrGGGgrrrr", "yyyyrrrryyyyrrrr"] 
         ]
         step = 0
         total_loss = 0
@@ -228,63 +212,24 @@ def main():
         prev_queue_time = dict()
         prev_queue_length = dict()
         light_times = dict()
+        prev_action = dict()
 
         lights = traci.trafficlight.getIDList() 
-        for l in lights:
-            light_phase_test = traci.trafficlight.getRedYellowGreenState(l)
-            # light_time_test = traci.trafficlight.getPhaseDuration(l)
-            # decc = light_time_test - 5
-            # print(f"Light test: {light_test} for light {l}")
-            # print(f"Light phase test: {light_phase_test} for light {l}")
-            # print(f"Light time test: {light_time_test} for light {l}")
-            # traci.trafficlight.setRedYellowGreenState(l, light_choice[0][0])
-            # traci.trafficlight.setPhaseDuration(l, decc)
-        while step < (end_time + 5):
+        for light_id, light in enumerate(lights):
+            light_times[light] = 0
+            prev_queue_time[light] = 0
+            prev_queue_length[light] = 0
+            prev_action[light_id] = 0
+
+        while step <= end_time:
             # SIMULATION STEP
             traci.simulationStep()
-            print(f"Step {step}")
-            queue_info(edges)
-            for l in lights:
-                light_time_test = traci.trafficlight.getPhaseDuration(l)
-                decc = light_time_test - 5
-                # print(decc)
-                # step += 1
-                # num_vehicles(edges)
-                # print(f"Light time test: {light_time_test} for light {l}")
-                # traci.trafficlight.setPhaseDuration(l, decc)
+            # print(f"Step {step}")
+            # queue_info(edges)
+            for light_id, light in enumerate(lights):
+                # GET STATE
+                state = queue_info(edges)
                 
-                # GET QUEUE LENGTHS AND TIMES
-                # queue_data, total_length, total_time = queue_info(edges)
-                # print(f"Queue data: {queue_data}")
-        
-                # input_data = torch.tensor(sum(queue_data, []), dtype=torch.float32)
-                # print(f"Input data: {input_data}")
-
-                # FORWARD PASS
-                # output_data = model(input_data)
-                # print(f"Output data: {output_data}")
-
-                # DEFINE OUTPUTS
-                # junc_state = output_data[:output_size // 2]
-                # junc_time = output_data[output_size // 2:]
-                # print(f"Junction State: {junc_state}")
-                # print(f"Junction Time: {junc_time}")
-            
-
-                # ADJUST TRAFFIC LIGHTS
-                # adjust_traffic_light(junctions, junc_time, junc_state)
-
-                # GET REWARD
-                # reward = -1
-                # reward = -total_time -1 * total_length
-
-                # CALCULATE LOSS
-                # loss = model.loss(output_data, torch.tensor([reward], dtype=torch.float32))
-
-                # BACKWARD PASS AND OPTIMIZE
-                model.optim.zero_grad()
-                # loss.backward()
-                model.optim.step()
 
                 # total_loss += loss.item()
                 num_iters += 1
@@ -303,14 +248,6 @@ def main():
 
         # CLOSE SUMO
     traci.close()
-
-    # PLOT LOSSES
-    plt.plot(range(1, epochs + 1), avg_losses)
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training Loss")
-    plt.show()
-    # plt.savefig("Figures\TrainingLoss-mainofframp-100epochs.png")
 
 if __name__ == "__main__":
     main()
