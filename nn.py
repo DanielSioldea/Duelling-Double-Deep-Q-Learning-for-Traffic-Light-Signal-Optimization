@@ -2,7 +2,6 @@
 import warnings
 warnings.filterwarnings("ignore")
 import os
-import gym
 import sys
 import optparse
 import numpy as np
@@ -24,7 +23,6 @@ from sumolib import checkBinary
 import traci
 import traci.constants as tc
 
-
 # OPTIONS (CUS WHY NOT)
 def get_options():
     optParser = optparse.OptionParser()
@@ -32,6 +30,38 @@ def get_options():
                          default=False, help="run the commandline version of sumo")
     options, args = optParser.parse_args()
     return options
+
+# FUNCTION TO GET INCOMING EDGES FOR A GIVEN LIGHT
+def incoming_cont_edges(light):
+    controlled_links = traci.trafficlight.getControlledLinks(light)
+    incoming_lanes = {link[0][0] for link in controlled_links}
+    incoming_edges = {lane.split('_')[0] for lane in incoming_lanes if traci.lane.getLinks(lane)}
+    # print(f"The incoming edges for light {light} are {incoming_edges}")
+    return incoming_edges
+
+# FUNCTION TO GET SURROUNDING EDGES FOR A GIVEN TARGET LIGHT; NEED TO MODIFY TO ONLY GET EDGES THAT
+# FEED INTO TARGET LIGHT
+def surrounding_cont_edges(target_light, light_list, distance_buffer=1000):
+    x1, y1 = traci.junction.getPosition(target_light)
+    surrounding_edges = []
+    # vehicles_to_target = {}
+    for light in light_list:
+        if light == target_light:
+            continue
+        x2, y2 = traci.junction.getPosition(light)
+        distance = traci.simulation.getDistance2D(x1, y1, x2, y2)
+        if distance < distance_buffer:
+            controlled_links = traci.trafficlight.getControlledLinks(light)
+            controlled_edges = {link[0][0].split('_')[0] for link in controlled_links}
+            surrounding_edges.extend(controlled_edges)
+            # for edge in controlled_edges:
+            #     vehicles = traci.edge.getLastStepVehicleIDs(edge)
+            #     for v_id in vehicles:
+            #         current_edge = traci.vehicle.getRoadID(v_id)
+            #         if current_edge in incoming_cont_edges(target_light):
+            #             vehicles_to_target[edge] = vehicles_to_target.get(edge, 0) + 1
+            #             print(f"Vehicle {v_id} is leaving {current_edge} from {light} to {target_light}")
+    return surrounding_edges #, vehicles_to_target
 
 # FUNCTION TO GET NUMBER OF VEHICLES STOPPED, MAX VEH WAITING TIME, AND SUM OF WAITING TIME IN EACH EDGE
 def queue_info(edges):
@@ -51,7 +81,6 @@ def queue_info(edges):
             if current_wait_time > max_wait_time[i]:
                 max_wait_time[i] = current_wait_time
     return vehicles_per_edge, vehicle_wait_time, max_wait_time
-
 
 # ADJUST TRAFFIC LIGHTS
 def adjust_traffic_light(junction, junc_time, junc_state):
@@ -172,34 +201,25 @@ class TrafficAgent:
 def main():
     # GET OPTIONS
     avg_losses = []
-    # START SUMO
+    # START SUMO FOR INITIAL CONFIGURATION
     sumoBinary = checkBinary('sumo')
     traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
 
-    agent = TrafficAgent(gamma=0.99, epsilon=1.0, lr=0.001, input_size=input_size, hidden1_size=256, hidden2_size=256, output_size=output, batch_size=64)
+    #agent = TrafficAgent(gamma=0.99, epsilon=1.0, lr=0.001, input_size=input_size, hidden1_size=256, hidden2_size=256, output_size=output, batch_size=64)
     # DEFINE NETWORK PARAMETERS
     scores, eps_history = [], []
-    input_size = 2 * num_edges
-    output = 2 * num_junctions
-    epochs = 100
+    # input_size = 2 * num_edges
+    # output = 2 * num_junctions
+    epochs = 1
     
-    # DEFINE JUNCTIONS AND LANES
-    junctions = traci.trafficlight.getIDList()
-    # print(f"Junctions: {junctions}")
-    # num_junctions = list(range(len(junctions)))
-    num_junctions = len(junctions)
-    # print(f"Number of junctions: {num_junctions}")
-    # edges = traci.edge.getIDList()
-    edges = [edge for edge in traci.edge.getIDList() if not edge.startswith(':')]
-    num_edges = len(edges)
-    # print(f"Edges: {edges}")
+    lights = traci.trafficlight.getIDList() 
+    print(f"Light IDs: {lights}")
     end_time = traci.simulation.getEndTime()
     # print(f"End time: {end_time}")
 
+    # traci.close()
     # TRAIN MODEL
-
     for epoch in range(epochs):
-        traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
         # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
         light_choice = [
             ["rrrrGGGgrrrrGGGg", "rrrryyyyrrrryyyy"],
@@ -214,12 +234,15 @@ def main():
         light_times = dict()
         prev_action = dict()
 
-        lights = traci.trafficlight.getIDList() 
         for light_id, light in enumerate(lights):
             light_times[light] = 0
             prev_queue_time[light] = 0
             prev_queue_length[light] = 0
             prev_action[light_id] = 0
+            edges = incoming_cont_edges(light)
+            print(f"Edges into light {light}: {edges}")
+            # surrounding_edges = surrounding_cont_edges(light, lights)
+            # print(f"Surrounding edges for light {light}: {surrounding_edges}")
 
         while step <= end_time:
             # SIMULATION STEP
@@ -227,16 +250,23 @@ def main():
             # print(f"Step {step}")
             # queue_info(edges)
             for light_id, light in enumerate(lights):
+                surrounding_cont_edges(light, lights)
+                # MAIN SIGNALIZED EDGES
+                # edges = incoming_cont_edges(light)
+                # print(f"Edges into light {light}: {edges}")
+                # surrounding_edges = surrounding_cont_edges(light)
+                # print(f"Surrounding edges for light {light}: {surrounding_edges}")
                 # GET STATE
-                state = queue_info(edges)
+                # state = queue_info(edges)
                 
+
 
                 # total_loss += loss.item()
                 num_iters += 1
             step += 1
             
 
-            current_state = traci.trafficlight.getRedYellowGreenState(junctions[0])
+            # current_state = traci.trafficlight.getRedYellowGreenState(junctions[0])
             # print(f"Current state: {current_state}")
         
         avg_loss = total_loss / num_iters
