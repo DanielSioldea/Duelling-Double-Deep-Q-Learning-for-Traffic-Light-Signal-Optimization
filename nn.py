@@ -65,22 +65,32 @@ def surrounding_cont_edges(target_light, light_list, distance_buffer=1000):
 
 # FUNCTION TO GET NUMBER OF VEHICLES STOPPED, MAX VEH WAITING TIME, AND SUM OF WAITING TIME IN EACH EDGE
 def queue_info(edges):
-    vehicles_per_edge = dict()
-    vehicle_id = dict()
-    vehicle_wait_time = dict()
-    max_wait_time = dict()
+    # vehicles_per_edge = dict()
+    # vehicle_id = dict()
+    # vehicle_wait_time = dict()
+    # max_wait_time = dict()
+    info = dict()
     for i in edges:
-        vehicles_per_edge[i] = 0
-        vehicle_wait_time[i] = 0
-        max_wait_time[i] = 0
-        vehicles_per_edge[i] = traci.edge.getLastStepHaltingNumber(i)
-        vehicle_id[i] = traci.edge.getLastStepVehicleIDs(i)
-        for v in vehicle_id[i]:
+        info[i] = {
+            'vehicles_per_edge': 0,
+            'vehicle_wait_time': 0,
+            'max_wait_time': 0
+        }
+        # vehicles_per_edge[i] = 0
+        # vehicle_wait_time[i] = 0
+        # max_wait_time[i] = 0
+        # vehicles_per_edge[i] = traci.edge.getLastStepHaltingNumber(i)
+        info[i]['vehicles_per_edge'] = traci.edge.getLastStepHaltingNumber(i)
+        vehicle_id = traci.edge.getLastStepVehicleIDs(i)
+        for v in vehicle_id:
             current_wait_time = traci.vehicle.getWaitingTime(v)
-            vehicle_wait_time[i] += current_wait_time
-            if current_wait_time > max_wait_time[i]:
-                max_wait_time[i] = current_wait_time
-    return vehicles_per_edge, vehicle_wait_time, max_wait_time
+            # vehicle_wait_time[i] += current_wait_time
+            # if current_wait_time > max_wait_time[i]:
+            #     max_wait_time[i] = current_wait_time
+            info[i]['vehicle_wait_time'] += current_wait_time
+            if current_wait_time > info[i]['max_wait_time']:
+                info[i]['max_wait_time'] = current_wait_time
+    return info #vehicles_per_edge, vehicle_wait_time, max_wait_time
 
 # ADJUST TRAFFIC LIGHTS
 def adjust_traffic_light(junction, junc_time, junc_state):
@@ -217,10 +227,10 @@ def main():
     end_time = traci.simulation.getEndTime()
     # print(f"End time: {end_time}")
 
-    # traci.close()
+    traci.close()
     # TRAIN MODEL
     for epoch in range(epochs):
-        # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
+        traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
         light_choice = [
             ["rrrrGGGgrrrrGGGg", "rrrryyyyrrrryyyy"],
             ["GGGgrrrrGGGgrrrr", "yyyyrrrryyyyrrrr"] 
@@ -239,25 +249,28 @@ def main():
             prev_queue_time[light] = 0
             prev_queue_length[light] = 0
             prev_action[light_id] = 0
-            edges = incoming_cont_edges(light)
-            print(f"Edges into light {light}: {edges}")
+            # target_edges = incoming_cont_edges(light)
+            # print(f"Edges into light {light}: {target_edges}")
             # surrounding_edges = surrounding_cont_edges(light, lights)
             # print(f"Surrounding edges for light {light}: {surrounding_edges}")
 
         while step <= end_time:
             # SIMULATION STEP
             traci.simulationStep()
-            # print(f"Step {step}")
+            print(f"Step {step}")
             # queue_info(edges)
             for light_id, light in enumerate(lights):
                 surrounding_cont_edges(light, lights)
                 # MAIN SIGNALIZED EDGES
-                # edges = incoming_cont_edges(light)
-                # print(f"Edges into light {light}: {edges}")
-                # surrounding_edges = surrounding_cont_edges(light)
+                target_edges = incoming_cont_edges(light)
+                surrounding_edges = surrounding_cont_edges(light, lights)
+                # print(f"Edges into light {light}: {target_edges}")
                 # print(f"Surrounding edges for light {light}: {surrounding_edges}")
                 # GET STATE
-                # state = queue_info(edges)
+                state = {**queue_info(target_edges), **queue_info(surrounding_edges)}
+                # state = {**queue_info(target_edges)}
+                # state = {**queue_info(surrounding_edges)}
+                print(f"State: {state}")
                 
 
 
