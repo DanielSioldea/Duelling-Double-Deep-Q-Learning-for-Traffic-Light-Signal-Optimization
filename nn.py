@@ -157,13 +157,13 @@ class TrafficAgent:
         self.reward_memory = np.zeros(self.mem_size, dtype=np.float32)
         self.terminal_memory = np.zeros(self.mem_size, dtype=np.bool)
 
-    def store_transition(self, state, action, reward, state_, done):
+    def store_transition(self, state, action, reward, state_, done, light):
         index = self.mem_cntr % self.mem_size
-        self.state_memory[index] = state
-        self.new_state_memory[index] = state_
-        self.reward_memory[index] = reward
-        self.action_memory[index] = action
-        self.terminal_memory[index] = done
+        self.state_memory[light][index] = state
+        self.new_state_memory[light][index] = state_
+        self.reward_memory[light][index] = reward
+        self.action_memory[light][index] = action
+        self.terminal_memory[light][index] = done
         self.mem_cntr += 1
 
     def choose_action(self, observation):
@@ -215,11 +215,9 @@ def main():
     sumoBinary = checkBinary('sumo')
     traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
 
-    #agent = TrafficAgent(gamma=0.99, epsilon=1.0, lr=0.001, input_size=input_size, hidden1_size=256, hidden2_size=256, output_size=output, batch_size=64)
+    agent = TrafficAgent(gamma=0.99, epsilon=1.0, lr=0.001, input_size=4, hidden1_size=256, hidden2_size=256, output_size=4, batch_size=64)
     # DEFINE NETWORK PARAMETERS
     scores, eps_history = [], []
-    # input_size = 2 * num_edges
-    # output = 2 * num_junctions
     epochs = 1
     
     lights = traci.trafficlight.getIDList() 
@@ -260,17 +258,18 @@ def main():
             print(f"Step {step}")
             # queue_info(edges)
             for light_id, light in enumerate(lights):
-                surrounding_cont_edges(light, lights)
                 # MAIN SIGNALIZED EDGES
                 target_edges = incoming_cont_edges(light)
+                # SURROUNDING SIGNALIZED EDGES
                 surrounding_edges = surrounding_cont_edges(light, lights)
-                # print(f"Edges into light {light}: {target_edges}")
-                # print(f"Surrounding edges for light {light}: {surrounding_edges}")
+
                 # GET STATE
                 state = {**queue_info(target_edges), **queue_info(surrounding_edges)}
                 # state = {**queue_info(target_edges)}
                 # state = {**queue_info(surrounding_edges)}
                 print(f"State: {state}")
+
+
                 
 
 
