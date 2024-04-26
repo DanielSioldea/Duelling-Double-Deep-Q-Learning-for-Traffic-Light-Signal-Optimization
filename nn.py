@@ -63,34 +63,54 @@ def surrounding_cont_edges(target_light, light_list, distance_buffer=1000):
             #             print(f"Vehicle {v_id} is leaving {current_edge} from {light} to {target_light}")
     return surrounding_edges #, vehicles_to_target
 
-# FUNCTION TO GET NUMBER OF VEHICLES STOPPED, MAX VEH WAITING TIME, AND SUM OF WAITING TIME IN EACH EDGE
+# FUNCTION TO GET NUMBER OF VEHICLES STOPPED, MAX VEH WAITING TIME, AND SUM OF WAITING TIME IN EACH EDGE;
+# THIS INCLUDES STRING VALUES IN THE RETURN CALL
+# def queue_info(edges):
+#     # vehicles_per_edge = dict()
+#     # vehicle_id = dict()
+#     # vehicle_wait_time = dict()
+#     # max_wait_time = dict()
+#     info = dict()
+#     for i in edges:
+#         info[i] = {
+#             'vehicles_per_edge': 0,
+#             'vehicle_wait_time': 0,
+#             'max_wait_time': 0
+#         }
+#         # vehicles_per_edge[i] = 0
+#         # vehicle_wait_time[i] = 0
+#         # max_wait_time[i] = 0
+#         # vehicles_per_edge[i] = traci.edge.getLastStepHaltingNumber(i)
+#         info[i]['vehicles_per_edge'] = traci.edge.getLastStepHaltingNumber(i)
+#         vehicle_id = traci.edge.getLastStepVehicleIDs(i)
+#         for v in vehicle_id:
+#             current_wait_time = traci.vehicle.getWaitingTime(v)
+#             # vehicle_wait_time[i] += current_wait_time
+#             # if current_wait_time > max_wait_time[i]:
+#             #     max_wait_time[i] = current_wait_time
+#             info[i]['vehicle_wait_time'] += current_wait_time
+#             if current_wait_time > info[i]['max_wait_time']:
+#                 info[i]['max_wait_time'] = current_wait_time
+#     return info #vehicles_per_edge, vehicle_wait_time, max_wait_time
+
 def queue_info(edges):
-    # vehicles_per_edge = dict()
-    # vehicle_id = dict()
-    # vehicle_wait_time = dict()
-    # max_wait_time = dict()
-    info = dict()
+    vehicles_per_edge = dict()
+    vehicle_id = dict()
+    vehicle_wait_time = dict()
+    max_wait_time = dict()
     for i in edges:
-        info[i] = {
-            'vehicles_per_edge': 0,
-            'vehicle_wait_time': 0,
-            'max_wait_time': 0
-        }
-        # vehicles_per_edge[i] = 0
-        # vehicle_wait_time[i] = 0
-        # max_wait_time[i] = 0
-        # vehicles_per_edge[i] = traci.edge.getLastStepHaltingNumber(i)
-        info[i]['vehicles_per_edge'] = traci.edge.getLastStepHaltingNumber(i)
-        vehicle_id = traci.edge.getLastStepVehicleIDs(i)
-        for v in vehicle_id:
+        vehicles_per_edge[i] = 0
+        vehicle_wait_time[i] = 0
+        max_wait_time[i] = 0
+        vehicles_per_edge[i] = traci.edge.getLastStepHaltingNumber(i)
+        vehicle_id[i] = traci.edge.getLastStepVehicleIDs(i)
+        for v in vehicle_id[i]:
             current_wait_time = traci.vehicle.getWaitingTime(v)
-            # vehicle_wait_time[i] += current_wait_time
-            # if current_wait_time > max_wait_time[i]:
-            #     max_wait_time[i] = current_wait_time
-            info[i]['vehicle_wait_time'] += current_wait_time
-            if current_wait_time > info[i]['max_wait_time']:
-                info[i]['max_wait_time'] = current_wait_time
-    return info #vehicles_per_edge, vehicle_wait_time, max_wait_time
+            vehicle_wait_time[i] += current_wait_time
+            if current_wait_time > max_wait_time[i]:
+                max_wait_time[i] = current_wait_time
+
+    return vehicles_per_edge, vehicle_wait_time, max_wait_time
 
 # ADJUST TRAFFIC LIGHTS
 def adjust_traffic_light(junction, junc_time, junc_state):
@@ -99,10 +119,10 @@ def adjust_traffic_light(junction, junc_time, junc_state):
 
 ## NEURAL NETWORK
 class TrafficController(nn.Module):
-    def __init__(self, input_size, lr, hidden1_size, hidden2_size, output_size):
+    def __init__(self, lr, input_size, hidden1_size, hidden2_size, output_size):
         super(TrafficController, self).__init__()
-        self.input_size = input_size
         self.lr = lr
+        self.input_size = input_size
         self.hidden1_size = hidden1_size
         self.hidden2_size = hidden2_size
         self.output_size = output_size
@@ -133,7 +153,7 @@ class TrafficController(nn.Module):
     
 ## DEFINE AGENT CLASS FOR LEARNING
 class TrafficAgent:
-    def __init__(self, gamma, epsilon, lr, input_size, hidden1_size, hidden2_size, output_size, max_memory_size, batch_size, eps_end=0.01, eps_dec=5e-4):
+    def __init__(self, gamma, epsilon, lr, input_size, hidden1_size, hidden2_size, output_size, batch_size, max_memory_size=100000, eps_end=0.01, eps_dec=5e-4):
         self.gamma = gamma
         self.epsilon = epsilon
         self.eps_min = eps_end
@@ -144,7 +164,7 @@ class TrafficAgent:
         self.hidden2_size = hidden2_size
         self.output_size = output_size
         self.action_space = [i for i in range(output_size)]
-        max_memory_size = 100000
+        # max_memory_size = 100000
         self.mem_size = max_memory_size
         self.mem_cntr = 0
         self.batch_size = batch_size
@@ -155,7 +175,7 @@ class TrafficAgent:
         self.new_state_memory = np.zeros((self.mem_size, self.input_size), dtype=np.float32)
         self.action_memory = np.zeros(self.mem_size, dtype=np.int32)
         self.reward_memory = np.zeros(self.mem_size, dtype=np.float32)
-        self.terminal_memory = np.zeros(self.mem_size, dtype=np.bool)
+        self.terminal_memory = np.zeros(self.mem_size, dtype=np.bool_)
 
     def store_transition(self, state, action, reward, state_, done, light):
         index = self.mem_cntr % self.mem_size
@@ -225,10 +245,11 @@ def main():
     end_time = traci.simulation.getEndTime()
     # print(f"End time: {end_time}")
 
-    traci.close()
+    # traci.close()
     # TRAIN MODEL
     for epoch in range(epochs):
-        traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
+        # sumoBinary = checkBinary('sumo')
+        # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
         light_choice = [
             ["rrrrGGGgrrrrGGGg", "rrrryyyyrrrryyyy"],
             ["GGGgrrrrGGGgrrrr", "yyyyrrrryyyyrrrr"] 
@@ -260,14 +281,18 @@ def main():
             for light_id, light in enumerate(lights):
                 # MAIN SIGNALIZED EDGES
                 target_edges = incoming_cont_edges(light)
+                vehicles_per_edge, vehicle_wait_time, max_wait_time = queue_info(target_edges)
+                #print(f"Light {light} - Vehicles per edge: {vehicles_per_edge}, Vehicle wait time: {vehicle_wait_time}, Max wait time: {max_wait_time}")
                 # SURROUNDING SIGNALIZED EDGES
                 surrounding_edges = surrounding_cont_edges(light, lights)
+                S_vehicles_per_edge, S_vehicle_wait_time, S_max_wait_time = queue_info(surrounding_edges)
+                #print(f"Light {light} - Surrounding vehicles per edge: {S_vehicles_per_edge}, Surrounding vehicle wait time: {S_vehicle_wait_time}, Surrounding max wait time: {S_max_wait_time}")
 
-                # GET STATE
-                state = {**queue_info(target_edges), **queue_info(surrounding_edges)}
-                # state = {**queue_info(target_edges)}
-                # state = {**queue_info(surrounding_edges)}
-                print(f"State: {state}")
+                # GET STATE VALUES IN FORM [Edge1_value, Edge2_value, ...]
+                state_ = list(vehicles_per_edge.values()) + list(max_wait_time.values()) \
+                            + list(S_vehicles_per_edge.values()) + list(S_max_wait_time.values())
+                action = agent.choose_action(state_)
+                # print(f"State: {state}")
 
 
                 
