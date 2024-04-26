@@ -238,16 +238,16 @@ def main():
     agent = TrafficAgent(gamma=0.99, epsilon=1.0, lr=0.001, input_size=4, hidden1_size=256, hidden2_size=256, output_size=4, batch_size=64)
     # DEFINE NETWORK PARAMETERS
     scores, eps_history = [], []
-    epochs = 1
+    epochs = 5
     
     lights = traci.trafficlight.getIDList() 
     print(f"Light IDs: {lights}")
     end_time = traci.simulation.getEndTime()
-    # print(f"End time: {end_time}")
-
     # traci.close()
     # TRAIN MODEL
     for epoch in range(epochs):
+        if (epoch + 1) % 1 == 0:
+            print(f"Epoch {epoch + 1}/{epochs}")
         # sumoBinary = checkBinary('sumo')
         # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
         light_choice = [
@@ -268,10 +268,6 @@ def main():
             prev_queue_time[light] = 0
             prev_queue_length[light] = 0
             prev_action[light_id] = 0
-            # target_edges = incoming_cont_edges(light)
-            # print(f"Edges into light {light}: {target_edges}")
-            # surrounding_edges = surrounding_cont_edges(light, lights)
-            # print(f"Surrounding edges for light {light}: {surrounding_edges}")
 
         while step <= end_time:
             # SIMULATION STEP
@@ -282,36 +278,30 @@ def main():
                 # MAIN SIGNALIZED EDGES
                 target_edges = incoming_cont_edges(light)
                 vehicles_per_edge, vehicle_wait_time, max_wait_time = queue_info(target_edges)
-                #print(f"Light {light} - Vehicles per edge: {vehicles_per_edge}, Vehicle wait time: {vehicle_wait_time}, Max wait time: {max_wait_time}")
+                vehicle_total = sum(vehicles_per_edge.values())
+                max_wait = sum(max_wait_time.values())
+
                 # SURROUNDING SIGNALIZED EDGES
                 surrounding_edges = surrounding_cont_edges(light, lights)
                 S_vehicles_per_edge, S_vehicle_wait_time, S_max_wait_time = queue_info(surrounding_edges)
-                #print(f"Light {light} - Surrounding vehicles per edge: {S_vehicles_per_edge}, Surrounding vehicle wait time: {S_vehicle_wait_time}, Surrounding max wait time: {S_max_wait_time}")
+                S_vehicle_total = sum(S_vehicles_per_edge.values())
+                S_max_wait = sum(S_max_wait_time.values())
 
                 # GET STATE VALUES IN FORM [Edge1_value, Edge2_value, ...]
                 state_ = list(vehicles_per_edge.values()) + list(max_wait_time.values()) \
                             + list(S_vehicles_per_edge.values()) + list(S_max_wait_time.values())
-                action = agent.choose_action(state_)
-                # print(f"State: {state}")
-
-
                 
-
-
+                # action = agent.choose_action(state_)
+                # REWARD FUNCTION WITH VARYING WEIGHTS ON EACH VALUE
+                reward = round(-1*max_wait - 0.8*vehicle_total - 0.1*S_max_wait - 0.1*S_vehicle_total, 2)
+                # print(list(max_wait_time.values()))
+                # print(f"State: {state}")
                 # total_loss += loss.item()
                 num_iters += 1
             step += 1
-            
-
-            # current_state = traci.trafficlight.getRedYellowGreenState(junctions[0])
-            # print(f"Current state: {current_state}")
         
         avg_loss = total_loss / num_iters
         avg_losses.append(avg_loss)
-
-            # PRINT LOSS
-        if (epoch + 1) % 1 == 0:
-            print(f"Epoch {epoch + 1}/{epochs}")
 
         # CLOSE SUMO
     traci.close()
