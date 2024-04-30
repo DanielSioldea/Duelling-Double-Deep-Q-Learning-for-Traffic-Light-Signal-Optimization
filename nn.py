@@ -4,6 +4,7 @@ warnings.filterwarnings("ignore")
 import os
 import sys
 import optparse
+from tqdm import tqdm
 import numpy as np
 import torch
 import torch.nn as nn
@@ -118,7 +119,7 @@ class TrafficController(nn.Module):
     
 ## DEFINE AGENT CLASS FOR LEARNING
 class TrafficAgent:
-    def __init__(self, gamma, epsilon, lr, input_size, hidden1_size, hidden2_size, output_size, batch_size, max_memory_size=100000, eps_end=0.01, eps_dec=5e-4):
+    def __init__(self, gamma, epsilon, lr, input_size, hidden1_size, hidden2_size, output_size, batch_size, lights, max_memory_size=100000, eps_end=0.01, eps_dec=5e-4):
         self.gamma = gamma
         self.epsilon = epsilon
         self.eps_min = eps_end
@@ -129,6 +130,7 @@ class TrafficAgent:
         self.hidden2_size = hidden2_size
         self.output_size = output_size
         self.action_space = [i for i in range(output_size)]
+        self.lights = lights
         # max_memory_size = 100000
         self.mem_size = max_memory_size
         self.mem_cntr = 0
@@ -137,25 +139,36 @@ class TrafficAgent:
         self.q_eval = TrafficController(self.lr, self.input_size, self.hidden1_size, self.hidden2_size, self.output_size)
         # self.q_eval = TrafficController(self.lr, input_size = input_size, hidden1_size=256, hidden2_size=256, output_size=output_size)
 
-        self.state_memory = np.zeros((self.mem_size, self.input_size), dtype=np.float32)
-        self.new_state_memory = np.zeros((self.mem_size, self.input_size), dtype=np.float32)
-        self.action_memory = np.zeros(self.mem_size, dtype=np.int32)
-        self.reward_memory = np.zeros(self.mem_size, dtype=np.float32)
-        self.terminal_memory = np.zeros(self.mem_size, dtype=np.bool_)
+        self.memory = dict()
+        for light in lights:
+            self.memory[light] = {
+                'state': np.zeros((self.mem_size, self.input_size), dtype=np.float32),
+                'new_state': np.zeros((self.mem_size, self.input_size), dtype=np.float32),
+                'action': np.zeros(self.mem_size, dtype=np.int32),
+                'reward': np.zeros(self.mem_size, dtype=np.float32),
+                'terminal': np.zeros(self.mem_size, dtype=np.bool_),
+                'mem_cntr': 0
+            }
+            # self.state_memory = np.zeros((self.mem_size, self.input_size), dtype=np.float32)
+            # self.new_state_memory = np.zeros((self.mem_size, self.input_size), dtype=np.float32)
+            # self.action_memory = np.zeros(self.mem_size, dtype=np.int32)
+            # self.reward_memory = np.zeros(self.mem_size, dtype=np.float32)
+            # self.terminal_memory = np.zeros(self.mem_size, dtype=np.bool_)
 
     def store_transition(self, state, action, reward, state_, done, light):
-        index = self.mem_cntr % self.mem_size
-        # self.state_memory[light][index] = state
-        # self.new_state_memory[light][index] = state_
-        # self.reward_memory[light][index] = reward
-        # self.action_memory[light][index] = action
-        # self.terminal_memory[light][index] = done
-        self.state_memory[index] = state
-        self.new_state_memory[index] = state_
-        self.reward_memory[index] = reward
-        self.action_memory[index] = action
-        self.terminal_memory[index] = done
-        self.mem_cntr += 1
+        index = self.memory[light]['mem_cntr'] % self.mem_size
+        self.memory[light]['state'][index] = state
+        self.memory[light]['new_state'][index] = state_
+        self.memory[light]['reward'][index] = reward
+        self.memory[light]['action'][index] = action
+        self.memory[light]['terminal'][index] = done
+        self.memory[light]['mem_cntr'] += 1
+        # self.state_memory[index] = state
+        # self.new_state_memory[index] = state_
+        # self.reward_memory[index] = reward
+        # self.action_memory[index] = action
+        # self.terminal_memory[index] = done
+        # self.mem_cntr += 1
 
     def choose_action(self, observation):
         if np.random.random() > self.epsilon:
@@ -165,27 +178,26 @@ class TrafficAgent:
         else:
             action = np.random.choice(self.action_space)
         return action
-    
-    # def calculate_duration(self, light, action):
-    #     min_duration = 5
-    #     max_duration = 60
-    #     calc = 
-    #     duration = min_duration + calc * (max_duration - min_duration)
-    #     return duration
 
-    def learn(self):
+    def learn(self, light):
         self.q_eval.optim.zero_grad()
-        if self.mem_cntr < self.batch_size:
+        if self.memory[light]['mem_cntr'] < self.batch_size:
             return
-        max_mem = min(self.mem_cntr, self.mem_size)
+        max_mem = min(self.memory[light]['mem_cntr'], self.mem_size)
         batch = np.random.choice(max_mem, self.batch_size, replace=False)
         batch_index = np.arange(self.batch_size, dtype=np.int32)
 
-        state_batch = self.state_memory[batch]
-        action_batch = self.action_memory[batch]
-        reward_batch = self.reward_memory[batch]
-        new_state_batch = self.new_state_memory[batch]
-        done_batch = self.terminal_memory[batch]
+        # state_batch = self.state_memory[batch]
+        # action_batch = self.action_memory[batch]
+        # reward_batch = self.reward_memory[batch]
+        # new_state_batch = self.new_state_memory[batch]
+        # done_batch = self.terminal_memory[batch]
+
+        state_batch = self.memory[light]['state'][batch]
+        action_batch = self.memory[light]['action'][batch]
+        reward_batch = self.memory[light]['reward'][batch]
+        new_state_batch = self.memory[light]['new_state'][batch]
+        done_batch = self.memory[light]['terminal'][batch]
 
         state_batch = torch.tensor(state_batch).to(self.q_eval.device)
         action_batch = torch.tensor(action_batch).to(self.q_eval.device)
@@ -211,21 +223,25 @@ def main():
     avg_losses = []
     # START SUMO FOR INITIAL CONFIGURATION
     sumoBinary = checkBinary('sumo')
-    traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
-
-    agent = TrafficAgent(gamma=0.99, epsilon=1.0, lr=0.001, input_size=16, hidden1_size=256, hidden2_size=256, output_size=12, batch_size=64)
+    traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
+    
     # DEFINE NETWORK PARAMETERS
-    scores, eps_history = [], []
-    epochs = 5
+    waiting_time = list()
+    waiting_ammt = list()
+    epochs = 50
     
     lights = traci.trafficlight.getIDList() 
     print(f"Light IDs: {lights}")
+    light_num = list(range(len(lights)))
+    print(f"Light Numbers: {light_num}")
     end_time = traci.simulation.getEndTime()
+
+    agent = TrafficAgent(gamma=0.99, epsilon=1.0, lr=0.001, input_size=16, hidden1_size=256, hidden2_size=256, output_size=12, batch_size=64, lights=light_num)
     # traci.close()
     # TRAIN MODEL
-    for epoch in range(epochs):
-        if (epoch + 1) % 1 == 0:
-            print(f"Epoch {epoch + 1}/{epochs}")
+    for epoch in tqdm(range(epochs), desc="Epochs"):
+        # if (epoch + 1) % 1 == 0:
+        #     print(f"Epoch {epoch + 1}/{epochs}")
         # sumoBinary = checkBinary('sumo')
         # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
         actions = [
@@ -245,6 +261,8 @@ def main():
         step = 0
         total_loss = 0
         num_iters = 0
+        wait_total = 0
+        count_total = 0
 
         prev_state = dict()
         light_times = dict()
@@ -258,14 +276,16 @@ def main():
         while step <= end_time:
             # SIMULATION STEP
             traci.simulationStep()
-            print(f"Step {step}")
+            #print(f"Step {step}")
             # queue_info(edges)
             for light_id, light in enumerate(lights):
                 # MAIN SIGNALIZED EDGES
                 target_edges = incoming_cont_edges(light)
                 vehicles_per_edge, vehicle_wait_time, max_wait_time = queue_info(target_edges)
                 vehicle_total = sum(vehicles_per_edge.values())
+                count_total += vehicle_total
                 max_wait = sum(max_wait_time.values())
+                wait_total += max_wait
 
                 # SURROUNDING SIGNALIZED EDGES
                 surrounding_edges = surrounding_cont_edges(light, lights)
@@ -273,24 +293,31 @@ def main():
                 S_vehicle_total = sum(S_vehicles_per_edge.values())
                 S_max_wait = sum(S_max_wait_time.values())
 
-                # GET STATE VALUES IN FORM [Edge1_value, Edge2_value, ...]
-                state_ = list(vehicles_per_edge.values()) + list(max_wait_time.values()) \
-                            + list(S_vehicles_per_edge.values()) + list(S_max_wait_time.values())
-                # print(f"State: {state_}")
-                state = prev_state[light_id]
-                prev_state[light_id] = state_
-                # REWARD FUNCTION WITH VARYING WEIGHTS ON EACH VALUE
-                reward = round(-1*max_wait - 0.8*vehicle_total - 0.1*S_max_wait - 0.1*S_vehicle_total, 2)
-                # STORE TRANSITION
-                agent.store_transition(state, prev_action[light_id], reward, state_, (step==end_time), light_id)
-                
-                # CHOOSE ACTION
-                action = agent.choose_action(state_)
-                print(f"Action: {action}")
-                prev_action[light_id] = action
-                # # ADJUST TRAFFIC LIGHTS
-                adjust_traffic_light(light, actions[action][0], actions[action][1])
-                adjust_traffic_light(light, actions[action][2], actions[action][3])
+                if light_times[light] == 0:
+                    # GET STATE VALUES IN FORM [Edge1_value, Edge2_value, ...]
+                    state_ = list(vehicles_per_edge.values()) + list(max_wait_time.values()) \
+                                + list(S_vehicles_per_edge.values()) + list(S_max_wait_time.values())
+                    # print(f"State: {state_}")
+                    state = prev_state[light_id]
+                    prev_state[light_id] = state_
+                    # REWARD FUNCTION WITH VARYING WEIGHTS ON EACH VALUE
+                    reward = round(-1*max_wait - 0.8*vehicle_total - 0.1*S_max_wait - 0.1*S_vehicle_total, 2)
+                    # STORE TRANSITION
+                    agent.store_transition(state, prev_action[light_id], reward, state_, (step==end_time), light_id)
+                    
+                    # CHOOSE ACTION
+                    action = agent.choose_action(state_)
+                    #print(f"Action: {action} for light {light}")
+                    prev_action[light_id] = action
+                    # # ADJUST TRAFFIC LIGHTS
+                    adjust_traffic_light(light, actions[action][0], actions[action][1])
+                    adjust_traffic_light(light, actions[action][2], actions[action][3])
+
+                    light_times[light] = actions[action][0]
+                    agent.learn(light_id)
+
+                else:
+                    light_times[light] -= 1
 
                 # print(list(max_wait_time.values()))
                 # print(f"State: {state}")
@@ -300,9 +327,45 @@ def main():
         
         avg_loss = total_loss / num_iters
         avg_losses.append(avg_loss)
+        waiting_time.append(wait_total)
+        waiting_ammt.append(count_total)
 
         # CLOSE SUMO
     traci.close()
+
+
+    # PLOTTING WAIT TIMES OVER EPOCHS
+    x = range(1, len(waiting_time) +1)
+    plt.plot(x, waiting_time)
+    plt.xlabel("Epoch Number")
+    plt.ylabel("Total Waiting Time")
+    plt.title("Total Waiting Time Over Epochs")
+
+    # PLOTTING WAITING AMOUNT OVER EPOCHS
+    plt.plot(x, waiting_ammt)
+    plt.xlabel("Epoch Number")
+    plt.ylabel("Total Waiting Amount")
+    plt.title("Total Waiting Amount Over Epochs")
+    plt.show()
+
+
+
+    fig, ax = plt.subplots(2)
+    # x = range(1, len(waiting_time) +1)
+
+    ax[0].plot(x, waiting_time)
+    ax[0].set_xlabel("Epoch Number")
+    ax[0].set_ylabel("Total Waiting Time")
+    ax[0].set_title("Total Waiting Time Over Epochs")
+
+    ax[1].plot(x, waiting_ammt)
+    ax[1].set_xlabel("Epoch Number")
+    ax[1].set_ylabel("Total Waiting Amount")
+    ax[1].set_title("Total Waiting Amount Over Epochs")
+
+    fig.suptitle("Traffic Light Control with Neural Networks")
+    # plt.savefig('Data/Figures/First_NN_Test_100_Epochs.png')
+    plt.show()
 
 if __name__ == "__main__":
     main()
