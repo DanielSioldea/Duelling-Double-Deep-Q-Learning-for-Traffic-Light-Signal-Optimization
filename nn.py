@@ -5,6 +5,7 @@ import os
 import sys
 import optparse
 from tqdm import tqdm
+from statistics import mean
 import numpy as np
 import torch
 import torch.nn as nn
@@ -42,7 +43,7 @@ def incoming_cont_edges(light):
 
 # FUNCTION TO GET SURROUNDING EDGES FOR A GIVEN TARGET LIGHT; NEED TO MODIFY TO ONLY GET EDGES THAT
 # FEED INTO TARGET LIGHT
-def surrounding_cont_edges(target_light, light_list, distance_buffer=1000):
+def surrounding_cont_edges(target_light, light_list, distance_buffer=500):
     x1, y1 = traci.junction.getPosition(target_light)
     surrounding_edges = []
     # vehicles_to_target = {}
@@ -223,28 +224,30 @@ def main():
     avg_losses = []
     # START SUMO FOR INITIAL CONFIGURATION
     sumoBinary = checkBinary('sumo')
-    traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
+    # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
+    traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
     
     # DEFINE NETWORK PARAMETERS
     waiting_time = list()
     waiting_ammt = list()
-    epochs = 50
+    epochs = 30
     
     lights = traci.trafficlight.getIDList() 
     print(f"Light IDs: {lights}")
     light_num = list(range(len(lights)))
     print(f"Light Numbers: {light_num}")
     end_time = traci.simulation.getEndTime()
-
-    agent = TrafficAgent(gamma=0.99, epsilon=1.0, lr=0.001, input_size=16, hidden1_size=256, hidden2_size=256, output_size=12, batch_size=64, lights=light_num)
+    max_state_size = 16
+    agent = TrafficAgent(gamma=0.99, epsilon=1.0, lr=0.001, input_size=max_state_size, hidden1_size=256, hidden2_size=256, output_size=12, batch_size=64, lights=light_num)
     # traci.close()
     # TRAIN MODEL
     for epoch in tqdm(range(epochs), desc="Epochs"):
+        print("\n")
         # if (epoch + 1) % 1 == 0:
         #     print(f"Epoch {epoch + 1}/{epochs}")
         # sumoBinary = checkBinary('sumo')
         # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
-        actions = [
+        actions_4_way = [
             [60, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
             [60, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"],
             [50, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
@@ -261,8 +264,8 @@ def main():
         step = 0
         total_loss = 0
         num_iters = 0
-        wait_total = 0
-        count_total = 0
+        wait_total = []
+        count_total = []
 
         prev_state = dict()
         light_times = dict()
@@ -276,16 +279,18 @@ def main():
         while step <= end_time:
             # SIMULATION STEP
             traci.simulationStep()
-            #print(f"Step {step}")
+            # print(f"Step {step}")
             # queue_info(edges)
             for light_id, light in enumerate(lights):
                 # MAIN SIGNALIZED EDGES
                 target_edges = incoming_cont_edges(light)
                 vehicles_per_edge, vehicle_wait_time, max_wait_time = queue_info(target_edges)
+
                 vehicle_total = sum(vehicles_per_edge.values())
-                count_total += vehicle_total
+                count_total.append(vehicle_total)
+
                 max_wait = sum(max_wait_time.values())
-                wait_total += max_wait
+                wait_total.append(max_wait)
 
                 # SURROUNDING SIGNALIZED EDGES
                 surrounding_edges = surrounding_cont_edges(light, lights)
@@ -297,7 +302,8 @@ def main():
                     # GET STATE VALUES IN FORM [Edge1_value, Edge2_value, ...]
                     state_ = list(vehicles_per_edge.values()) + list(max_wait_time.values()) \
                                 + list(S_vehicles_per_edge.values()) + list(S_max_wait_time.values())
-                    # print(f"State: {state_}")
+                    state_ += [0] * (max_state_size - len(state_))
+                    # print(f"State: {state_} for light {light}")
                     state = prev_state[light_id]
                     prev_state[light_id] = state_
                     # REWARD FUNCTION WITH VARYING WEIGHTS ON EACH VALUE
@@ -307,13 +313,13 @@ def main():
                     
                     # CHOOSE ACTION
                     action = agent.choose_action(state_)
-                    #print(f"Action: {action} for light {light}")
+                    # print(f"Action: {action} for light {light}")
                     prev_action[light_id] = action
-                    # # ADJUST TRAFFIC LIGHTS
-                    adjust_traffic_light(light, actions[action][0], actions[action][1])
-                    adjust_traffic_light(light, actions[action][2], actions[action][3])
+                    # ADJUST TRAFFIC LIGHTS
+                    adjust_traffic_light(light, actions_4_way[action][0], actions_4_way[action][1])
+                    adjust_traffic_light(light, actions_4_way[action][2], actions_4_way[action][3])
 
-                    light_times[light] = actions[action][0]
+                    # light_times[light] = actions[action][0]
                     agent.learn(light_id)
 
                 else:
@@ -324,11 +330,17 @@ def main():
                 # total_loss += loss.item()
                 num_iters += 1
             step += 1
+        average_max_wait = mean(wait_total)
+        average_count = mean(count_total)
+
         
         avg_loss = total_loss / num_iters
         avg_losses.append(avg_loss)
-        waiting_time.append(wait_total)
-        waiting_ammt.append(count_total)
+        waiting_time.append(average_max_wait)
+        waiting_ammt.append(average_count)
+        print(f"Average waiting time: {average_max_wait} | Average vehicle count: {average_count}")
+        print("\n")
+        print("\n")
 
         # CLOSE SUMO
     traci.close()
@@ -338,12 +350,15 @@ def main():
     x = range(1, len(waiting_time) +1)
     plt.plot(x, waiting_time)
     plt.xlabel("Epoch Number")
+    plt.xticks(x)
     plt.ylabel("Total Waiting Time")
     plt.title("Total Waiting Time Over Epochs")
+    plt.show()
 
     # PLOTTING WAITING AMOUNT OVER EPOCHS
     plt.plot(x, waiting_ammt)
     plt.xlabel("Epoch Number")
+    plt.xticks(x)
     plt.ylabel("Total Waiting Amount")
     plt.title("Total Waiting Amount Over Epochs")
     plt.show()
