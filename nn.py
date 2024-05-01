@@ -261,6 +261,22 @@ def main():
             [10, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
             [10, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"]
         ]
+
+        actions_3_way = [
+            [60, "GGgrrGGG", 5, "yyyrryyy"],
+            [60, "rrrGGGrr", 5, "rrryyyrr"],
+            [50, "GGgrrGGG", 5, "yyyrryyy"],
+            [50, "rrrGGGrr", 5, "rrryyyrr"],
+            [40, "GGgrrGGG", 5, "yyyrryyy"],
+            [40, "rrrGGGrr", 5, "rrryyyrr"],
+            [30, "GGgrrGGG", 5, "yyyrryyy"],
+            [30, "rrrGGGrr", 5, "rrryyyrr"],
+            [20, "GGgrrGGG", 5, "yyyrryyy"],
+            [20, "rrrGGGrr", 5, "rrryyyrr"],
+            [10, "GGgrrGGG", 5, "yyyrryyy"],
+            [10, "rrrGGGrr", 5, "rrryyyrr"]
+        ]
+
         step = 0
         total_loss = 0
         num_iters = 0
@@ -284,6 +300,12 @@ def main():
             for light_id, light in enumerate(lights):
                 # MAIN SIGNALIZED EDGES
                 target_edges = incoming_cont_edges(light)
+                
+                if len(target_edges) == 4:
+                    actions = actions_4_way
+                else:
+                    actions = actions_3_way
+                    
                 vehicles_per_edge, vehicle_wait_time, max_wait_time = queue_info(target_edges)
 
                 vehicle_total = sum(vehicles_per_edge.values())
@@ -316,8 +338,8 @@ def main():
                     # print(f"Action: {action} for light {light}")
                     prev_action[light_id] = action
                     # ADJUST TRAFFIC LIGHTS
-                    adjust_traffic_light(light, actions_4_way[action][0], actions_4_way[action][1])
-                    adjust_traffic_light(light, actions_4_way[action][2], actions_4_way[action][3])
+                    adjust_traffic_light(light, actions[action][0], actions[action][1])
+                    adjust_traffic_light(light, actions[action][2], actions[action][3])
 
                     # light_times[light] = actions[action][0]
                     agent.learn(light_id)
