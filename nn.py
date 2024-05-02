@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import mplcursors
 
 # SET UP SUMO TRACI CONNECTION
 if 'SUMO_HOME' in os.environ:
@@ -94,7 +95,6 @@ class TrafficController(nn.Module):
         self.hidden2_size = hidden2_size
         self.output_size = output_size
 
-        #self.flatten = nn.Flatten()
         self.hidden1 = nn.Linear(self.input_size, self.hidden1_size)      # FIRST HIDDEN LAYER HAS 12 NEURONS
         # self.activ1 = nn.ReLU()                                         # ReLU ACTIVATION FUNCTION
         self.hidden2 = nn.Linear(self.hidden1_size, self.hidden2_size)    # SECOND HIDDEN LAYER HAS 8 NEURONS
@@ -132,13 +132,11 @@ class TrafficAgent:
         self.output_size = output_size
         self.action_space = [i for i in range(output_size)]
         self.lights = lights
-        # max_memory_size = 100000
         self.mem_size = max_memory_size
         self.mem_cntr = 0
         self.batch_size = batch_size
 
         self.q_eval = TrafficController(self.lr, self.input_size, self.hidden1_size, self.hidden2_size, self.output_size)
-        # self.q_eval = TrafficController(self.lr, input_size = input_size, hidden1_size=256, hidden2_size=256, output_size=output_size)
 
         self.memory = dict()
         for light in lights:
@@ -150,11 +148,6 @@ class TrafficAgent:
                 'terminal': np.zeros(self.mem_size, dtype=np.bool_),
                 'mem_cntr': 0
             }
-            # self.state_memory = np.zeros((self.mem_size, self.input_size), dtype=np.float32)
-            # self.new_state_memory = np.zeros((self.mem_size, self.input_size), dtype=np.float32)
-            # self.action_memory = np.zeros(self.mem_size, dtype=np.int32)
-            # self.reward_memory = np.zeros(self.mem_size, dtype=np.float32)
-            # self.terminal_memory = np.zeros(self.mem_size, dtype=np.bool_)
 
     def store_transition(self, state, action, reward, state_, done, light):
         index = self.memory[light]['mem_cntr'] % self.mem_size
@@ -164,35 +157,28 @@ class TrafficAgent:
         self.memory[light]['action'][index] = action
         self.memory[light]['terminal'][index] = done
         self.memory[light]['mem_cntr'] += 1
-        # self.state_memory[index] = state
-        # self.new_state_memory[index] = state_
-        # self.reward_memory[index] = reward
-        # self.action_memory[index] = action
-        # self.terminal_memory[index] = done
-        # self.mem_cntr += 1
 
     def choose_action(self, observation):
+        # actions = None
+        state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
         if np.random.random() > self.epsilon:
-            state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
+            # state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
             actions = self.q_eval.forward(state)
+            # print(f"Q-values: {actions}")
             action = torch.argmax(actions).item()
         else:
             action = np.random.choice(self.action_space)
+        # print(f"Q-values: {actions}, chosen action: {action}")
         return action
 
     def learn(self, light):
         self.q_eval.optim.zero_grad()
         if self.memory[light]['mem_cntr'] < self.batch_size:
             return
-        max_mem = min(self.memory[light]['mem_cntr'], self.mem_size)
-        batch = np.random.choice(max_mem, self.batch_size, replace=False)
-        batch_index = np.arange(self.batch_size, dtype=np.int32)
-
-        # state_batch = self.state_memory[batch]
-        # action_batch = self.action_memory[batch]
-        # reward_batch = self.reward_memory[batch]
-        # new_state_batch = self.new_state_memory[batch]
-        # done_batch = self.terminal_memory[batch]
+        # max_mem = min(self.memory[light]['mem_cntr'], self.mem_size)
+        # batch = np.random.choice(max_mem, self.batch_size, replace=False)
+        batch = np.arange(self.memory[light]['mem_cntr'], dtype=np.int32)
+        #batch_index = np.arange(self.batch_size, dtype=np.int32)
 
         state_batch = self.memory[light]['state'][batch]
         action_batch = self.memory[light]['action'][batch]
@@ -207,7 +193,8 @@ class TrafficAgent:
         done_batch = torch.tensor(done_batch).to(self.q_eval.device)
 
         # q_eval = self.q_eval.forward(state_batch).gather(1, action_batch.unsqueeze(1)).squeeze(1)
-        q_eval = self.q_eval.forward(state_batch)[batch_index, action_batch]
+        # q_eval = self.q_eval.forward(state_batch)[batch_index, action_batch]
+        q_eval = self.q_eval.forward(state_batch)[batch, action_batch]
         q_next = self.q_eval.forward(new_state_batch)
         q_next[done_batch] = 0.0
         q_target = reward_batch + self.gamma * torch.max(q_next, dim=1)[0]
@@ -230,7 +217,7 @@ def main():
     # DEFINE NETWORK PARAMETERS
     waiting_time = list()
     waiting_ammt = list()
-    epochs = 30
+    epochs = 150
     
     lights = traci.trafficlight.getIDList() 
     print(f"Light IDs: {lights}")
@@ -238,15 +225,12 @@ def main():
     print(f"Light Numbers: {light_num}")
     end_time = traci.simulation.getEndTime()
     max_state_size = 16
-    agent = TrafficAgent(gamma=0.99, epsilon=1.0, lr=0.001, input_size=max_state_size, hidden1_size=256, hidden2_size=256, output_size=12, batch_size=64, lights=light_num)
-    # traci.close()
+    agent = TrafficAgent(gamma=0.9, epsilon=1.0, lr=0.01, input_size=max_state_size, hidden1_size=256, hidden2_size=256, output_size=12, batch_size=64, lights=light_num)
+    traci.close()
     # TRAIN MODEL
     for epoch in tqdm(range(epochs), desc="Epochs"):
-        print("\n")
-        # if (epoch + 1) % 1 == 0:
-        #     print(f"Epoch {epoch + 1}/{epochs}")
-        # sumoBinary = checkBinary('sumo')
-        # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg"])
+        traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
+        # traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
         actions_4_way = [
             [60, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
             [60, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"],
@@ -278,25 +262,30 @@ def main():
         ]
 
         step = 0
-        total_loss = 0
-        num_iters = 0
         wait_total = []
         count_total = []
-
         prev_state = dict()
         light_times = dict()
+        current_duration = dict()
+        current_phase = dict()
         prev_action = dict()
 
         for light_id, light in enumerate(lights):
-            light_times[light] = 0
+            light_times[light] = traci.trafficlight.getPhaseDuration(light)
+            # print(f"Light {light} has phase duration {light_times[light]}")
             prev_state[light_id] = 0
             prev_action[light_id] = 0
+            # GET CURRENT PHASE DURATION AND STATE
+            current_duration[light] = traci.trafficlight.getPhaseDuration(light)
+            # print(f"Light {light} has phase duration {current_duration[light]}")
+            current_phase[light] = traci.trafficlight.getRedYellowGreenState(light)
 
         while step <= end_time:
             # SIMULATION STEP
             traci.simulationStep()
+            step += 1
             # print(f"Step {step}")
-            # queue_info(edges)
+
             for light_id, light in enumerate(lights):
                 # MAIN SIGNALIZED EDGES
                 target_edges = incoming_cont_edges(light)
@@ -329,66 +318,62 @@ def main():
                     state = prev_state[light_id]
                     prev_state[light_id] = state_
                     # REWARD FUNCTION WITH VARYING WEIGHTS ON EACH VALUE
-                    reward = round(-1*max_wait - 0.8*vehicle_total - 0.1*S_max_wait - 0.1*S_vehicle_total, 2)
+                    reward = -1 * (round(1*max_wait + 1*vehicle_total + 0.05*S_max_wait + 0.05*S_vehicle_total, 2))
+                    # print(f"Reward: {reward}")
                     # STORE TRANSITION
                     agent.store_transition(state, prev_action[light_id], reward, state_, (step==end_time), light_id)
-                    
                     # CHOOSE ACTION
                     action = agent.choose_action(state_)
+                    # print(f"Action: {action} for light {light}")
                     # print(f"Action: {action} for light {light}")
                     prev_action[light_id] = action
                     # ADJUST TRAFFIC LIGHTS
                     adjust_traffic_light(light, actions[action][0], actions[action][1])
-                    adjust_traffic_light(light, actions[action][2], actions[action][3])
-
-                    # light_times[light] = actions[action][0]
+                    current_duration[light] = actions[action][0] 
+                    # print(f"Light {light} has phase duration {actions[action][0]} and state {actions[action][1]}")
+                    # print(actions[action][0], actions[action][1])
+                    #adjust_traffic_light(light, actions[action][2], actions[action][3])
+                    light_times[light] = current_duration[light] - 1
+                    # LEARN
                     agent.learn(light_id)
-
+                    continue
                 else:
                     light_times[light] -= 1
-
-                # print(list(max_wait_time.values()))
-                # print(f"State: {state}")
-                # total_loss += loss.item()
-                num_iters += 1
-            step += 1
         average_max_wait = mean(wait_total)
         average_count = mean(count_total)
+        traci.close()
 
-        
-        avg_loss = total_loss / num_iters
-        avg_losses.append(avg_loss)
         waiting_time.append(average_max_wait)
         waiting_ammt.append(average_count)
         print(f"Average waiting time: {average_max_wait} | Average vehicle count: {average_count}")
         print("\n")
-        print("\n")
+        # print("\n")
 
         # CLOSE SUMO
-    traci.close()
+    # traci.close()
 
 
     # PLOTTING WAIT TIMES OVER EPOCHS
-    x = range(1, len(waiting_time) +1)
-    plt.plot(x, waiting_time)
-    plt.xlabel("Epoch Number")
-    plt.xticks(x)
-    plt.ylabel("Total Waiting Time")
-    plt.title("Total Waiting Time Over Epochs")
-    plt.show()
+    # x = range(1, len(waiting_time) +1)
+    # plt.plot(x, waiting_time)
+    # plt.xlabel("Epoch Number")
+    # # plt.xticks(x)
+    # plt.ylabel("Total Waiting Time")
+    # plt.title("Total Waiting Time Over Epochs")
+    # mplcursors.cursor(hover=True)
+    # plt.show()
 
-    # PLOTTING WAITING AMOUNT OVER EPOCHS
-    plt.plot(x, waiting_ammt)
-    plt.xlabel("Epoch Number")
-    plt.xticks(x)
-    plt.ylabel("Total Waiting Amount")
-    plt.title("Total Waiting Amount Over Epochs")
-    plt.show()
-
-
+    # # PLOTTING WAITING AMOUNT OVER EPOCHS
+    # plt.plot(x, waiting_ammt)
+    # plt.xlabel("Epoch Number")
+    # # plt.xticks(x)
+    # plt.ylabel("Total Waiting Amount")
+    # plt.title("Total Waiting Amount Over Epochs")
+    # mplcursors.cursor(hover=True)
+    # plt.show()
 
     fig, ax = plt.subplots(2)
-    # x = range(1, len(waiting_time) +1)
+    x = range(1, len(waiting_time) +1)
 
     ax[0].plot(x, waiting_time)
     ax[0].set_xlabel("Epoch Number")
@@ -402,6 +387,7 @@ def main():
 
     fig.suptitle("Traffic Light Control with Neural Networks")
     # plt.savefig('Data/Figures/First_NN_Test_100_Epochs.png')
+    mplcursors.cursor(hover=True)
     plt.show()
 
 if __name__ == "__main__":
