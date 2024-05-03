@@ -5,6 +5,7 @@ import os
 import sys
 import optparse
 from tqdm import tqdm
+# import action_list as al
 from statistics import mean
 import numpy as np
 import torch
@@ -13,6 +14,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import mplcursors
+import plotly.graph_objects as go
 
 # SET UP SUMO TRACI CONNECTION
 if 'SUMO_HOME' in os.environ:
@@ -160,9 +162,9 @@ class TrafficAgent:
 
     def choose_action(self, observation):
         # actions = None
-        state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
+        # state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
         if np.random.random() > self.epsilon:
-            # state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
+            state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
             actions = self.q_eval.forward(state)
             # print(f"Q-values: {actions}")
             action = torch.argmax(actions).item()
@@ -211,26 +213,38 @@ def main():
     avg_losses = []
     # START SUMO FOR INITIAL CONFIGURATION
     sumoBinary = checkBinary('sumo')
+    # PICK CONFIGURATION FILE
     # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
     traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
     
     # DEFINE NETWORK PARAMETERS
     waiting_time = list()
     waiting_ammt = list()
-    epochs = 150
+    epochs = 200
     
     lights = traci.trafficlight.getIDList() 
     print(f"Light IDs: {lights}")
     light_num = list(range(len(lights)))
     print(f"Light Numbers: {light_num}")
     end_time = traci.simulation.getEndTime()
-    max_state_size = 16
-    agent = TrafficAgent(gamma=0.9, epsilon=1.0, lr=0.01, input_size=max_state_size, hidden1_size=256, hidden2_size=256, output_size=12, batch_size=64, lights=light_num)
+    max_state_size = 24
+    agent = TrafficAgent(
+        gamma=0.99, 
+        epsilon=1.0, 
+        lr=0.001, 
+        input_size=max_state_size, 
+        hidden1_size=256, 
+        hidden2_size=256, 
+        output_size=12, 
+        batch_size=64, 
+        lights=light_num)
     traci.close()
+
     # TRAIN MODEL
     for epoch in tqdm(range(epochs), desc="Epochs"):
-        traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
-        # traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
+        # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
+        traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
+
         actions_4_way = [
             [60, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
             [60, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"],
@@ -268,7 +282,9 @@ def main():
         light_times = dict()
         current_duration = dict()
         current_phase = dict()
+        initial_yellow_phase = dict()
         prev_action = dict()
+        action = 999999999
 
         for light_id, light in enumerate(lights):
             light_times[light] = traci.trafficlight.getPhaseDuration(light)
@@ -279,12 +295,18 @@ def main():
             current_duration[light] = traci.trafficlight.getPhaseDuration(light)
             # print(f"Light {light} has phase duration {current_duration[light]}")
             current_phase[light] = traci.trafficlight.getRedYellowGreenState(light)
+            initial_yellow_phase[light] = current_phase[light].replace('G', 'y').replace('g', 'y')
+            # print(f"Initial phase for light {light} is {current_phase[light]}, and it will be {initial_yellow_phase[light]}")
+
 
         while step <= end_time:
+            
             # SIMULATION STEP
             traci.simulationStep()
             step += 1
             # print(f"Step {step}")
+            # print(f"Light time for light 1 {light[1]}: {light_times[light]}")
+            # print(f"Light phase for light 1 {light[1]}: {current_phase[light]}")
 
             for light_id, light in enumerate(lights):
                 # MAIN SIGNALIZED EDGES
@@ -309,16 +331,21 @@ def main():
                 S_vehicle_total = sum(S_vehicles_per_edge.values())
                 S_max_wait = sum(S_max_wait_time.values())
 
-                if light_times[light] == 0:
+                light_times[light] -= 1
+
+                if light_times[light] == 0 and 'y' in current_phase[light]:
+                # if light_times[light] == 0:
                     # GET STATE VALUES IN FORM [Edge1_value, Edge2_value, ...]
                     state_ = list(vehicles_per_edge.values()) + list(max_wait_time.values()) \
                                 + list(S_vehicles_per_edge.values()) + list(S_max_wait_time.values())
+                    # state_ = list(vehicles_per_edge.values()) + list(max_wait_time.values())
                     state_ += [0] * (max_state_size - len(state_))
                     # print(f"State: {state_} for light {light}")
                     state = prev_state[light_id]
                     prev_state[light_id] = state_
                     # REWARD FUNCTION WITH VARYING WEIGHTS ON EACH VALUE
                     reward = -1 * (round(1*max_wait + 1*vehicle_total + 0.05*S_max_wait + 0.05*S_vehicle_total, 2))
+                    # reward = -1 * (round(1*max_wait + 0.8*vehicle_total, 2))
                     # print(f"Reward: {reward}")
                     # STORE TRANSITION
                     agent.store_transition(state, prev_action[light_id], reward, state_, (step==end_time), light_id)
@@ -329,7 +356,8 @@ def main():
                     prev_action[light_id] = action
                     # ADJUST TRAFFIC LIGHTS
                     adjust_traffic_light(light, actions[action][0], actions[action][1])
-                    current_duration[light] = actions[action][0] 
+                    current_duration[light] = actions[action][0]
+                    current_phase[light] = actions[action][1]
                     # print(f"Light {light} has phase duration {actions[action][0]} and state {actions[action][1]}")
                     # print(actions[action][0], actions[action][1])
                     #adjust_traffic_light(light, actions[action][2], actions[action][3])
@@ -337,8 +365,23 @@ def main():
                     # LEARN
                     agent.learn(light_id)
                     continue
-                else:
-                    light_times[light] -= 1
+
+                elif 'G' in current_phase[light] and light_times[light] == 0 and action != 999999999 or \
+                         'g' in current_phase[light] and light_times[light] == 0 and action != 999999999:
+                    adjust_traffic_light(light, actions[action][2], actions[action][3])  # FOR ONCE THE ACTION HAS SELECTED A NEW SEQ.
+                    current_phase[light] = actions[action][3]
+                    light_times[light] = actions[action][2] - 1
+                    continue
+
+                elif ('G' in current_phase[light] and light_times[light] == 0 and action == 999999999) or \
+                       ('g' in current_phase[light] and light_times[light] == 0 and action == 999999999):
+                    adjust_traffic_light(light, 5, initial_yellow_phase[light])
+                    current_phase[light] = initial_yellow_phase[light]
+                    light_times[light] = 5 - 1
+                    continue
+                # else:
+                #     light_times[light] -= 1
+
         average_max_wait = mean(wait_total)
         average_count = mean(count_total)
         traci.close()
@@ -377,18 +420,58 @@ def main():
 
     ax[0].plot(x, waiting_time)
     ax[0].set_xlabel("Epoch Number")
-    ax[0].set_ylabel("Total Waiting Time")
-    ax[0].set_title("Total Waiting Time Over Epochs")
+    ax[0].set_ylabel("Avg. Waiting Time")
+    ax[0].set_title(f"Total Waiting Time Over {epochs} Epochs")
 
     ax[1].plot(x, waiting_ammt)
     ax[1].set_xlabel("Epoch Number")
     ax[1].set_ylabel("Total Waiting Amount")
-    ax[1].set_title("Total Waiting Amount Over Epochs")
+    ax[1].set_title(f"Total Waiting Amount Over {epochs} Epochs")
 
     fig.suptitle("Traffic Light Control with Neural Networks")
     # plt.savefig('Data/Figures/First_NN_Test_100_Epochs.png')
+    plt.subplots_adjust(hspace=0.5)
     mplcursors.cursor(hover=True)
     plt.show()
+
+    # fig = go.Figure(data=go.Scatter(x=x, y=waiting_time, mode='markers'))
+
+    # fig.update_layout(
+    #     title="Avg. Waiting Time per Epoch",
+    #     xaxis_title="Epoch Number",
+    #     yaxis_title="Avg. Waiting Time",
+    #     autosize=False,
+    #     width=500,
+    #     height=500,
+    #     margin=dict(
+    #         l=50,
+    #         r=50,
+    #         b=100,
+    #         t=100,
+    #         pad=4
+    #     )
+    # )   
+
+    # fig.show()
+
+    # fig1 = go.Figure(data=go.Scatter(x=x, y=waiting_ammt, mode='markers'))
+    # fig1.update_layout(
+    #     title="Avg. Vehicle Queue Count per Epoch",
+    #     xaxis_title="Epoch Number",
+    #     yaxis_title="Avg. Vehicle Count",
+    #     autosize=False,
+    #     width=500,
+    #     height=500,
+    #     margin=dict(
+    #         l=50,
+    #         r=50,
+    #         b=100,
+    #         t=100,
+    #         pad=4
+    #     )
+    # )   
+
+    # fig1.show()
 
 if __name__ == "__main__":
     main()
