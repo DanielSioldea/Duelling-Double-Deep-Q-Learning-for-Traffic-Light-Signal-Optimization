@@ -5,7 +5,6 @@ import os
 import sys
 import optparse
 from tqdm import tqdm
-# import action_list as al
 from statistics import mean
 import numpy as np
 import torch
@@ -14,7 +13,6 @@ import torch.optim as optim
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import mplcursors
-import plotly.graph_objects as go
 
 # SET UP SUMO TRACI CONNECTION
 if 'SUMO_HOME' in os.environ:
@@ -44,12 +42,10 @@ def incoming_cont_edges(light):
     # print(f"The incoming edges for light {light} are {incoming_edges}")
     return incoming_edges
 
-# FUNCTION TO GET SURROUNDING EDGES FOR A GIVEN TARGET LIGHT; NEED TO MODIFY TO ONLY GET EDGES THAT
-# FEED INTO TARGET LIGHT
+# FUNCTION TO GET SURROUNDING EDGES FOR A GIVEN TARGET LIGHT; IF LIGHT IS WITHIN 500 METERS OF TARGET LIGHT, ADD TO LIST
 def surrounding_cont_edges(target_light, light_list, distance_buffer=500):
     x1, y1 = traci.junction.getPosition(target_light)
     surrounding_edges = []
-    # vehicles_to_target = {}
     for light in light_list:
         if light == target_light:
             continue
@@ -87,7 +83,7 @@ def adjust_traffic_light(junction, junc_time, junc_state):
     traci.trafficlight.setRedYellowGreenState(junction, junc_state)
     traci.trafficlight.setPhaseDuration(junction, junc_time)
 
-## NEURAL NETWORK
+# NEURAL NETWORK
 class TrafficController(nn.Module):
     def __init__(self, lr, input_size, hidden1_size, hidden2_size, output_size):
         super(TrafficController, self).__init__()
@@ -97,12 +93,17 @@ class TrafficController(nn.Module):
         self.hidden2_size = hidden2_size
         self.output_size = output_size
 
-        self.hidden1 = nn.Linear(self.input_size, self.hidden1_size)      # FIRST HIDDEN LAYER HAS 12 NEURONS
-        # self.activ1 = nn.ReLU()                                         # ReLU ACTIVATION FUNCTION
-        self.hidden2 = nn.Linear(self.hidden1_size, self.hidden2_size)    # SECOND HIDDEN LAYER HAS 8 NEURONS
-        # self.activ2 = nn.ReLU()                                         # ReLU ACTIVATION FUNCTION
-        self.output = nn.Linear(self.hidden2_size, self.output_size)      # OUTPUT LAYER HAS ONE NEURON
-        # self.activ_out = nn.Sigmoid()                                   # SIGMOID ACTIVATION FUNCTION (ENSURES OUTPUT BETWEEN 0 AND 1)
+        self.hidden1 = nn.Linear(self.input_size, self.hidden1_size)
+        self.hidden2 = nn.Linear(self.hidden1_size, self.hidden2_size)                             
+        self.output = nn.Linear(self.hidden2_size, self.output_size)  
+
+        # self.hidden1_A = nn.Linear(self.input_size, self.hidden1_size)
+        # self.output_A = nn.Linear(self.hidden1_size, self.output_size)                                         
+        # self.hidden2_A = nn.Linear(self.hidden1_size, self.hidden2_size)                             
+        # self.output_A = nn.Linear(self.hidden2_size, self.output_size)   
+
+        # self.hidden1_v = nn.Linear(self.input_size, 1)
+                              
 
         # OPTIMIZER AND LOSS FUNCTION (TEST DIFFERENT OPTIONS)
         self.optim = optim.Adam(self.parameters(), lr = self.lr)
@@ -160,6 +161,18 @@ class TrafficAgent:
         self.memory[light]['terminal'][index] = done
         self.memory[light]['mem_cntr'] += 1
 
+    def sample_buffer(self,batch_size, light):
+        max_mem = min(self.mem_cntr, self.mem_size)
+        batch = np.random.choice(max_mem, batch_size, replace=False)
+
+        states = self.memory[light]['state'][batch]
+        actions = self.memory[light]['action'][batch]
+        rewards = self.memory[light]['reward'][batch]
+        new_states = self.memory[light]['new_state'][batch]
+        dones = self.memory[light]['terminal'][batch]
+
+        return states, actions, rewards, new_states, dones 
+
     def choose_action(self, observation):
         # actions = None
         # state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
@@ -194,7 +207,6 @@ class TrafficAgent:
         new_state_batch = torch.tensor(new_state_batch).to(self.q_eval.device)
         done_batch = torch.tensor(done_batch).to(self.q_eval.device)
 
-        # q_eval = self.q_eval.forward(state_batch).gather(1, action_batch.unsqueeze(1)).squeeze(1)
         # q_eval = self.q_eval.forward(state_batch)[batch_index, action_batch]
         q_eval = self.q_eval.forward(state_batch)[batch, action_batch]
         q_next = self.q_eval.forward(new_state_batch)
@@ -209,8 +221,6 @@ class TrafficAgent:
 
 # MAIN FUNCTION
 def main():
-    # GET OPTIONS
-    avg_losses = []
     # START SUMO FOR INITIAL CONFIGURATION
     sumoBinary = checkBinary('sumo')
     # PICK CONFIGURATION FILE
@@ -242,9 +252,11 @@ def main():
 
     # TRAIN MODEL
     for epoch in tqdm(range(epochs), desc="Epochs"):
+        # SELECT CONFIGURATION FILE FOR SIMULATION
         # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
         traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
 
+        # ACTIONS FOR 4-WAY INTERSECTIONS
         actions_4_way = [
             [60, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
             [60, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"],
@@ -259,7 +271,7 @@ def main():
             [10, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
             [10, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"]
         ]
-
+        # ACTIONS FOR 3-WAY INTERSECTIONS
         actions_3_way = [
             [60, "GGgrrGGG", 5, "yyyrryyy"],
             [60, "rrrGGGrr", 5, "rrryyyrr"],
@@ -275,6 +287,7 @@ def main():
             [10, "rrrGGGrr", 5, "rrryyyrr"]
         ]
 
+        # INITIALIZE VARIABLES AND LISTS
         step = 0
         wait_total = []
         count_total = []
@@ -287,38 +300,38 @@ def main():
         action = 999999999
 
         for light_id, light in enumerate(lights):
+            # GET INITIAL PHASE DURATION; SET STATES TO 0 BEFORE SIMULATION
             light_times[light] = traci.trafficlight.getPhaseDuration(light)
-            # print(f"Light {light} has phase duration {light_times[light]}")
             prev_state[light_id] = 0
             prev_action[light_id] = 0
+
             # GET CURRENT PHASE DURATION AND STATE
             current_duration[light] = traci.trafficlight.getPhaseDuration(light)
-            # print(f"Light {light} has phase duration {current_duration[light]}")
             current_phase[light] = traci.trafficlight.getRedYellowGreenState(light)
-            initial_yellow_phase[light] = current_phase[light].replace('G', 'y').replace('g', 'y')
-            # print(f"Initial phase for light {light} is {current_phase[light]}, and it will be {initial_yellow_phase[light]}")
 
+            # DEFINE INITIAL YELLOW PHASE 
+            initial_yellow_phase[light] = current_phase[light].replace('G', 'y').replace('g', 'y')
 
         while step <= end_time:
             
             # SIMULATION STEP
             traci.simulationStep()
             step += 1
-            # print(f"Step {step}")
-            # print(f"Light time for light 1 {light[1]}: {light_times[light]}")
-            # print(f"Light phase for light 1 {light[1]}: {current_phase[light]}")
 
             for light_id, light in enumerate(lights):
                 # MAIN SIGNALIZED EDGES
                 target_edges = incoming_cont_edges(light)
                 
+                # SELECT ACTIONS BASED ON NUMBER OF EDGES
                 if len(target_edges) == 4:
                     actions = actions_4_way
                 else:
                     actions = actions_3_way
                     
+                # GET QUEUE INFORMATION
                 vehicles_per_edge, vehicle_wait_time, max_wait_time = queue_info(target_edges)
 
+                # GET TOTAL VEHICLES AND MAX WAIT TIME
                 vehicle_total = sum(vehicles_per_edge.values())
                 count_total.append(vehicle_total)
 
@@ -333,88 +346,65 @@ def main():
 
                 light_times[light] -= 1
 
+                # IF LIGHT IS YELLOW AND TIME IS UP, SELECT ACTION
                 if light_times[light] == 0 and 'y' in current_phase[light]:
-                # if light_times[light] == 0:
                     # GET STATE VALUES IN FORM [Edge1_value, Edge2_value, ...]
                     state_ = list(vehicles_per_edge.values()) + list(max_wait_time.values()) \
                                 + list(S_vehicles_per_edge.values()) + list(S_max_wait_time.values())
-                    # state_ = list(vehicles_per_edge.values()) + list(max_wait_time.values())
                     state_ += [0] * (max_state_size - len(state_))
-                    # print(f"State: {state_} for light {light}")
                     state = prev_state[light_id]
                     prev_state[light_id] = state_
+
                     # REWARD FUNCTION WITH VARYING WEIGHTS ON EACH VALUE
                     reward = -1 * (round(1*max_wait + 1*vehicle_total + 0.05*S_max_wait + 0.05*S_vehicle_total, 2))
-                    # reward = -1 * (round(1*max_wait + 0.8*vehicle_total, 2))
                     # print(f"Reward: {reward}")
+
                     # STORE TRANSITION
                     agent.store_transition(state, prev_action[light_id], reward, state_, (step==end_time), light_id)
+
                     # CHOOSE ACTION
                     action = agent.choose_action(state_)
-                    # print(f"Action: {action} for light {light}")
-                    # print(f"Action: {action} for light {light}")
                     prev_action[light_id] = action
+
                     # ADJUST TRAFFIC LIGHTS
                     adjust_traffic_light(light, actions[action][0], actions[action][1])
                     current_duration[light] = actions[action][0]
                     current_phase[light] = actions[action][1]
-                    # print(f"Light {light} has phase duration {actions[action][0]} and state {actions[action][1]}")
-                    # print(actions[action][0], actions[action][1])
-                    #adjust_traffic_light(light, actions[action][2], actions[action][3])
                     light_times[light] = current_duration[light] - 1
+
                     # LEARN
                     agent.learn(light_id)
                     continue
 
+                # IF LIGHT IS GREEN AND TIME IS UP AND NOT IN INITIAL STATE, SELECT CORRESPONDING YELLOW LIGHT ACTION   
                 elif 'G' in current_phase[light] and light_times[light] == 0 and action != 999999999 or \
                          'g' in current_phase[light] and light_times[light] == 0 and action != 999999999:
-                    adjust_traffic_light(light, actions[action][2], actions[action][3])  # FOR ONCE THE ACTION HAS SELECTED A NEW SEQ.
+                    adjust_traffic_light(light, actions[action][2], actions[action][3])  
                     current_phase[light] = actions[action][3]
                     light_times[light] = actions[action][2] - 1
                     continue
-
+                
+                # IF LIGHT IS GREEN AND TIME IS UP AND IN INITIAL STATE, SELECT INITIAL YELLOW LIGHT ACTION
                 elif ('G' in current_phase[light] and light_times[light] == 0 and action == 999999999) or \
                        ('g' in current_phase[light] and light_times[light] == 0 and action == 999999999):
                     adjust_traffic_light(light, 5, initial_yellow_phase[light])
                     current_phase[light] = initial_yellow_phase[light]
                     light_times[light] = 5 - 1
                     continue
-                # else:
-                #     light_times[light] -= 1
 
+        # GET AVERAGES PERFORMANCE EVALUATION
         average_max_wait = mean(wait_total)
         average_count = mean(count_total)
+        # CLOSE SUMO FOR NEXT EPOCH
         traci.close()
 
+        # APPEND AVERAGES FOR PLOT
         waiting_time.append(average_max_wait)
         waiting_ammt.append(average_count)
         print(f"Average waiting time: {average_max_wait} | Average vehicle count: {average_count}")
         print("\n")
-        # print("\n")
 
-        # CLOSE SUMO
-    # traci.close()
-
-
-    # PLOTTING WAIT TIMES OVER EPOCHS
-    # x = range(1, len(waiting_time) +1)
-    # plt.plot(x, waiting_time)
-    # plt.xlabel("Epoch Number")
-    # # plt.xticks(x)
-    # plt.ylabel("Total Waiting Time")
-    # plt.title("Total Waiting Time Over Epochs")
-    # mplcursors.cursor(hover=True)
-    # plt.show()
-
-    # # PLOTTING WAITING AMOUNT OVER EPOCHS
-    # plt.plot(x, waiting_ammt)
-    # plt.xlabel("Epoch Number")
-    # # plt.xticks(x)
-    # plt.ylabel("Total Waiting Amount")
-    # plt.title("Total Waiting Amount Over Epochs")
-    # mplcursors.cursor(hover=True)
-    # plt.show()
-
+    # PLOT RESULTS
     fig, ax = plt.subplots(2)
     x = range(1, len(waiting_time) +1)
 
@@ -434,44 +424,6 @@ def main():
     mplcursors.cursor(hover=True)
     plt.show()
 
-    # fig = go.Figure(data=go.Scatter(x=x, y=waiting_time, mode='markers'))
-
-    # fig.update_layout(
-    #     title="Avg. Waiting Time per Epoch",
-    #     xaxis_title="Epoch Number",
-    #     yaxis_title="Avg. Waiting Time",
-    #     autosize=False,
-    #     width=500,
-    #     height=500,
-    #     margin=dict(
-    #         l=50,
-    #         r=50,
-    #         b=100,
-    #         t=100,
-    #         pad=4
-    #     )
-    # )   
-
-    # fig.show()
-
-    # fig1 = go.Figure(data=go.Scatter(x=x, y=waiting_ammt, mode='markers'))
-    # fig1.update_layout(
-    #     title="Avg. Vehicle Queue Count per Epoch",
-    #     xaxis_title="Epoch Number",
-    #     yaxis_title="Avg. Vehicle Count",
-    #     autosize=False,
-    #     width=500,
-    #     height=500,
-    #     margin=dict(
-    #         l=50,
-    #         r=50,
-    #         b=100,
-    #         t=100,
-    #         pad=4
-    #     )
-    # )   
-
-    # fig1.show()
-
+# RUN MAIN FUNCTION
 if __name__ == "__main__":
     main()
