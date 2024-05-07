@@ -120,13 +120,13 @@ class TrafficController(nn.Module):
         A = self.output2_A(flat2)
         return V, A
     
-    def save_checkpoint(self, filename):
+    def save_checkpoint(self):
         print("... saving checkpoint ...")
-        torch.save(self.state_dict(), filename)
+        torch.save(self.state_dict(), self.checkpoint_file)
 
-    def load_checkpoint(self, filename):
+    def load_checkpoint(self):
         print("... loading checkpoint ...")
-        self.load_state_dict(torch.load(filename))
+        self.load_state_dict(torch.load(self.checkpoint_file))
     
 ## DEFINE AGENT CLASS FOR LEARNING
 class TrafficAgent:
@@ -264,7 +264,8 @@ def main():
     # DEFINE NETWORK PARAMETERS
     waiting_time = list()
     waiting_ammt = list()
-    epochs = 200
+    epochs = 30
+    load_checkpoint = False
     
     lights = traci.trafficlight.getIDList() 
     print(f"Light IDs: {lights}")
@@ -277,12 +278,15 @@ def main():
         epsilon=1.0, 
         lr=0.001, 
         input_size=max_state_size, 
-        hidden1_size=256, 
-        hidden2_size=256, 
+        hidden1_size=512, 
+        hidden2_size=512, 
         output_size=12, 
         batch_size=64, 
         lights=light_num)
     traci.close()
+
+    if load_checkpoint:
+        agent.load_models()
 
     # TRAIN MODEL
     for epoch in tqdm(range(epochs), desc="Epochs"):

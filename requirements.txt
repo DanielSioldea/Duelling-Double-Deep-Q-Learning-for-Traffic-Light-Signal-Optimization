@@ -1,0 +1,8 @@
+# How to install: pip install -r requirements.txt
+
+tqdm>=4.66.2
+matplotlib>=3.8.4
+numpy>=1.26.4
+torch>=2.2.2+cu121
+torchvision>=0.17.2+cu121
+mplcursors>=0.5.3
