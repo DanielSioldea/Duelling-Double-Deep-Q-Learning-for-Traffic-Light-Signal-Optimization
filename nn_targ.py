@@ -95,14 +95,9 @@ class TrafficController(nn.Module):
         self.checkpoint_dir = chkpt_dir
         self.checkpoint_file = os.path.join(self.checkpoint_dir, name)
 
-        # self.hidden1 = nn.Linear(self.input_size, self.hidden1_size)
-        # self.hidden2 = nn.Linear(self.hidden1_size, self.hidden2_size)                             
-        # self.output = nn.Linear(self.hidden2_size, self.output_size)  
-
         self.hidden1 = nn.Linear(self.input_size, self.hidden1_size)
-        self.output1_A = nn.Linear(self.hidden1_size, self.output_size)                                         
-        # self.hidden2_A = nn.Linear(self.hidden1_size, self.hidden2_size)                             
-        # self.output2_A = nn.Linear(self.hidden2_size, self.output_size)   
+        self.hidden2 = nn.Linear(self.hidden1_size, self.hidden2_size)                             
+        self.output2_A = nn.Linear(self.hidden2_size, self.output_size)   
 
         self.output_V = nn.Linear(self.hidden1_size, 1)
                               
@@ -118,17 +113,11 @@ class TrafficController(nn.Module):
     
     # DEFINE HOW NN FEEDS FORWARD INTO LAYERS
     def forward(self, x):
-        # x = F.relu(self.hidden1(x))
-        # x = F.relu(self.hidden2(x))
-        # actions = self.output(x)
-        # return actions
         flat1 = F.relu(self.hidden1(x))
-        # flat2 = F.relu(self.hidden2_A(x))
+        flat2 = F.relu(self.hidden2(flat1))
 
-        V = self.output_V(flat1)
-        # V = self.output_V(flat2)
-        A = self.output1_A(flat1)
-        # A = self.output2_A(flat2)
+        V = self.output_V(flat2)
+        A = self.output2_A(flat2)
         return V, A
     
     def save_checkpoint(self, filename):
@@ -156,7 +145,6 @@ class TrafficAgent:
         self.action_space = [i for i in range(output_size)]
         self.lights = lights
         self.mem_size = max_memory_size
-        self.mem_cntr = 0
         self.batch_size = batch_size
         self.learn_step_counter = 0
         self.chkpt_dir = chkpt_dir
@@ -172,8 +160,9 @@ class TrafficAgent:
             self.memory[light] = {
                 'state': np.zeros((self.mem_size, self.input_size), dtype=np.float32),
                 'new_state': np.zeros((self.mem_size, self.input_size), dtype=np.float32),
-                'action': np.zeros(self.mem_size, dtype=np.int32),
+                'action': np.zeros(self.mem_size, dtype=np.int64),
                 'reward': np.zeros(self.mem_size, dtype=np.float32),
+                # 'terminal': np.zeros(self.mem_size, dtype=np.bool_),
                 'terminal': np.zeros(self.mem_size, dtype=np.bool_),
                 'mem_cntr': 0
             }
@@ -213,7 +202,8 @@ class TrafficAgent:
         return action
     
     def replace_target_network(self):
-        if self.learn_step_counter % self.replace_target__net == 0:
+        if self.replace_target__net is not None and \
+           self.learn_step_counter % self.replace_target__net == 0:
             self.q_next.load_state_dict(self.q_eval.state_dict())
 
     def save_models(self):
@@ -233,55 +223,28 @@ class TrafficAgent:
 
         state, action, reward, new_state, done = self.sample_buffer(self.batch_size, light)
 
-        # max_mem = min(self.memory[light]['mem_cntr'], self.mem_size)
-        # batch = np.random.choice(max_mem, self.batch_size, replace=False)
-        # batch = np.arange(self.memory[light]['mem_cntr'], dtype=np.int32)
-        #batch_index = np.arange(self.batch_size, dtype=np.int32)
-
-        # state_batch = self.memory[light]['state'][batch]
-        # action_batch = self.memory[light]['action'][batch]
-        # reward_batch = self.memory[light]['reward'][batch]
-        # new_state_batch = self.memory[light]['new_state'][batch]
-        # done_batch = self.memory[light]['terminal'][batch]
-
         states_T = torch.tensor(state).to(self.q_eval.device)
         rewards_T = torch.tensor(reward).to(self.q_eval.device)
         dones_T = torch.tensor(done).to(self.q_eval.device)
         actions_T = torch.tensor(action).to(self.q_eval.device)
         new_states_T = torch.tensor(new_state).to(self.q_eval.device)
 
-
-        # state_batch = torch.tensor(state_batch).to(self.q_eval.device)
-        # action_batch = torch.tensor(action_batch).to(self.q_eval.device)
-        # reward_batch = torch.tensor(reward_batch).to(self.q_eval.device)
-        # new_state_batch = torch.tensor(new_state_batch).to(self.q_eval.device)
-        # done_batch = torch.tensor(done_batch).to(self.q_eval.device)
-
         indicies = np.arange(self.batch_size)
 
         V_s, A_s = self.q_eval.forward(states_T)
         V_s_, A_s_ = self.q_next.forward(new_states_T)
-
         V_s_eval, A_s_eval = self.q_eval.forward(new_states_T)
 
-        # # q_eval = self.q_eval.forward(state_batch)[batch_index, action_batch]
-        # q_eval = self.q_eval.forward(state_batch)[batch, action_batch]
-        # q_next = self.q_eval.forward(new_state_batch)
-        # q_next[done_batch] = 0.0
-        # q_target = reward_batch + self.gamma * torch.max(q_next, dim=1)[0]
-
-        # loss = self.q_eval.loss(q_target, q_eval).to(self.q_eval.device)
-        # loss.backward()
-        # self.q_eval.optim.step()
-
+        # q_pred = torch.add(V_s, (A_s - A_s.mean(dim=1, keepdim=True))).gather(1, actions_T.unsqueeze(-1)).squeeze(-1)
         q_pred = torch.add(V_s, (A_s - A_s.mean(dim=1, keepdim=True)))[indicies, actions_T]
         q_next = torch.add(V_s_, (A_s_ - A_s_.mean(dim=1, keepdim=True)))
-        q_eval = torch.add(V_s_eval, (A_s_eval - A_s_eval.mean(dim=1, keepdim=True)))[indicies, actions_T]
+        q_eval = torch.add(V_s_eval, (A_s_eval - A_s_eval.mean(dim=1, keepdim=True)))
 
         max_actions = torch.argmax(q_eval, dim=1)
 
         q_next[dones_T] = 0.0
         q_target = rewards_T + self.gamma * q_next[indicies, max_actions]
+        
 
         loss = self.q_eval.loss(q_target, q_pred).to(self.q_eval.device)
         loss.backward()
@@ -462,6 +425,10 @@ def main():
                     current_phase[light] = initial_yellow_phase[light]
                     light_times[light] = 5 - 1
                     continue
+
+        
+        if epoch > 0 and epoch % 10 == 0:
+            agent.save_models()
 
         # GET AVERAGES PERFORMANCE EVALUATION
         average_max_wait = mean(wait_total)
