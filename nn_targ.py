@@ -85,17 +85,27 @@ def adjust_traffic_light(junction, junc_time, junc_state):
 
 # NEURAL NETWORK
 class TrafficController(nn.Module):
-    def __init__(self, lr, input_size, hidden1_size, hidden2_size, output_size):
+    def __init__(self, lr, input_size, hidden1_size, hidden2_size, output_size, chkpt_dir, name):
         super(TrafficController, self).__init__()
         self.lr = lr
         self.input_size = input_size
         self.hidden1_size = hidden1_size
         self.hidden2_size = hidden2_size
         self.output_size = output_size
+        self.checkpoint_dir = chkpt_dir
+        self.checkpoint_file = os.path.join(self.checkpoint_dir, name)
+
+        # self.hidden1 = nn.Linear(self.input_size, self.hidden1_size)
+        # self.hidden2 = nn.Linear(self.hidden1_size, self.hidden2_size)                             
+        # self.output = nn.Linear(self.hidden2_size, self.output_size)  
 
         self.hidden1 = nn.Linear(self.input_size, self.hidden1_size)
-        self.hidden2 = nn.Linear(self.hidden1_size, self.hidden2_size)                             
-        self.output = nn.Linear(self.hidden2_size, self.output_size)                            
+        self.output1_A = nn.Linear(self.hidden1_size, self.output_size)                                         
+        # self.hidden2_A = nn.Linear(self.hidden1_size, self.hidden2_size)                             
+        # self.output2_A = nn.Linear(self.hidden2_size, self.output_size)   
+
+        self.output_V = nn.Linear(self.hidden1_size, 1)
+                              
 
         # OPTIMIZER AND LOSS FUNCTION (TEST DIFFERENT OPTIONS)
         self.optim = optim.Adam(self.parameters(), lr = self.lr)
@@ -108,14 +118,32 @@ class TrafficController(nn.Module):
     
     # DEFINE HOW NN FEEDS FORWARD INTO LAYERS
     def forward(self, x):
-        x = F.relu(self.hidden1(x))
-        x = F.relu(self.hidden2(x))
-        actions = self.output(x)
-        return actions
+        # x = F.relu(self.hidden1(x))
+        # x = F.relu(self.hidden2(x))
+        # actions = self.output(x)
+        # return actions
+        flat1 = F.relu(self.hidden1(x))
+        # flat2 = F.relu(self.hidden2_A(x))
+
+        V = self.output_V(flat1)
+        # V = self.output_V(flat2)
+        A = self.output1_A(flat1)
+        # A = self.output2_A(flat2)
+        return V, A
+    
+    def save_checkpoint(self, filename):
+        print("... saving checkpoint ...")
+        torch.save(self.state_dict(), filename)
+
+    def load_checkpoint(self, filename):
+        print("... loading checkpoint ...")
+        self.load_state_dict(torch.load(filename))
     
 ## DEFINE AGENT CLASS FOR LEARNING
 class TrafficAgent:
-    def __init__(self, gamma, epsilon, lr, input_size, hidden1_size, hidden2_size, output_size, batch_size, lights, max_memory_size=100000, eps_end=0.01, eps_dec=5e-4):
+    def __init__(self, gamma, epsilon, lr, input_size, hidden1_size, hidden2_size, output_size,
+                 batch_size, lights, max_memory_size=100000, eps_end=0.01, eps_dec=5e-4,
+                 chkpt_dir = 'tmp/traffic_controller', replace_target_net = 1000):
         self.gamma = gamma
         self.epsilon = epsilon
         self.eps_min = eps_end
@@ -130,8 +158,14 @@ class TrafficAgent:
         self.mem_size = max_memory_size
         self.mem_cntr = 0
         self.batch_size = batch_size
+        self.learn_step_counter = 0
+        self.chkpt_dir = chkpt_dir
+        self.replace_target__net = replace_target_net
 
-        self.q_eval = TrafficController(self.lr, self.input_size, self.hidden1_size, self.hidden2_size, self.output_size)
+        self.q_eval = TrafficController(self.lr, self.input_size, self.hidden1_size, self.hidden2_size,
+                                        self.output_size, chkpt_dir=self.chkpt_dir, name='q_eval')
+        self.q_next = TrafficController(self.lr, self.input_size, self.hidden1_size, self.hidden2_size,
+                                        self.output_size, chkpt_dir=self.chkpt_dir, name='q_next')
 
         self.memory = dict()
         for light in lights:
@@ -153,49 +187,106 @@ class TrafficAgent:
         self.memory[light]['terminal'][index] = done
         self.memory[light]['mem_cntr'] += 1
 
+    def sample_buffer(self, batch_size, light):
+        max_mem = min(self.memory[light]['mem_cntr'], self.mem_size)
+        batch = np.random.choice(max_mem, batch_size, replace=False)
+
+        states = self.memory[light]['state'][batch]
+        actions = self.memory[light]['action'][batch]
+        rewards = self.memory[light]['reward'][batch]
+        new_states = self.memory[light]['new_state'][batch]
+        dones = self.memory[light]['terminal'][batch]
+
+        return states, actions, rewards, new_states, dones 
+
     def choose_action(self, observation):
         # actions = None
         # state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
         if np.random.random() > self.epsilon:
             state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
-            actions = self.q_eval.forward(state)
+            _, advantage = self.q_eval.forward(state)
             # print(f"Q-values: {actions}")
-            action = torch.argmax(actions).item()
+            action = torch.argmax(advantage).item()
         else:
             action = np.random.choice(self.action_space)
         # print(f"Q-values: {actions}, chosen action: {action}")
         return action
+    
+    def replace_target_network(self):
+        if self.learn_step_counter % self.replace_target__net == 0:
+            self.q_next.load_state_dict(self.q_eval.state_dict())
+
+    def save_models(self):
+        self.q_eval.save_checkpoint()
+        self.q_next.save_checkpoint()
+
+    def load_models(self):
+        self.q_eval.load_checkpoint()
+        self.q_next.load_checkpoint()
 
     def learn(self, light):
         self.q_eval.optim.zero_grad()
         if self.memory[light]['mem_cntr'] < self.batch_size:
             return
+        
+        self.replace_target_network()
+
+        state, action, reward, new_state, done = self.sample_buffer(self.batch_size, light)
+
         # max_mem = min(self.memory[light]['mem_cntr'], self.mem_size)
         # batch = np.random.choice(max_mem, self.batch_size, replace=False)
-        batch = np.arange(self.memory[light]['mem_cntr'], dtype=np.int32)
+        # batch = np.arange(self.memory[light]['mem_cntr'], dtype=np.int32)
         #batch_index = np.arange(self.batch_size, dtype=np.int32)
 
-        state_batch = self.memory[light]['state'][batch]
-        action_batch = self.memory[light]['action'][batch]
-        reward_batch = self.memory[light]['reward'][batch]
-        new_state_batch = self.memory[light]['new_state'][batch]
-        done_batch = self.memory[light]['terminal'][batch]
+        # state_batch = self.memory[light]['state'][batch]
+        # action_batch = self.memory[light]['action'][batch]
+        # reward_batch = self.memory[light]['reward'][batch]
+        # new_state_batch = self.memory[light]['new_state'][batch]
+        # done_batch = self.memory[light]['terminal'][batch]
 
-        state_batch = torch.tensor(state_batch).to(self.q_eval.device)
-        action_batch = torch.tensor(action_batch).to(self.q_eval.device)
-        reward_batch = torch.tensor(reward_batch).to(self.q_eval.device)
-        new_state_batch = torch.tensor(new_state_batch).to(self.q_eval.device)
-        done_batch = torch.tensor(done_batch).to(self.q_eval.device)
+        states_T = torch.tensor(state).to(self.q_eval.device)
+        rewards_T = torch.tensor(reward).to(self.q_eval.device)
+        dones_T = torch.tensor(done).to(self.q_eval.device)
+        actions_T = torch.tensor(action).to(self.q_eval.device)
+        new_states_T = torch.tensor(new_state).to(self.q_eval.device)
 
-        # q_eval = self.q_eval.forward(state_batch)[batch_index, action_batch]
-        q_eval = self.q_eval.forward(state_batch)[batch, action_batch]
-        q_next = self.q_eval.forward(new_state_batch)
-        q_next[done_batch] = 0.0
-        q_target = reward_batch + self.gamma * torch.max(q_next, dim=1)[0]
 
-        loss = self.q_eval.loss(q_target, q_eval).to(self.q_eval.device)
+        # state_batch = torch.tensor(state_batch).to(self.q_eval.device)
+        # action_batch = torch.tensor(action_batch).to(self.q_eval.device)
+        # reward_batch = torch.tensor(reward_batch).to(self.q_eval.device)
+        # new_state_batch = torch.tensor(new_state_batch).to(self.q_eval.device)
+        # done_batch = torch.tensor(done_batch).to(self.q_eval.device)
+
+        indicies = np.arange(self.batch_size)
+
+        V_s, A_s = self.q_eval.forward(states_T)
+        V_s_, A_s_ = self.q_next.forward(new_states_T)
+
+        V_s_eval, A_s_eval = self.q_eval.forward(new_states_T)
+
+        # # q_eval = self.q_eval.forward(state_batch)[batch_index, action_batch]
+        # q_eval = self.q_eval.forward(state_batch)[batch, action_batch]
+        # q_next = self.q_eval.forward(new_state_batch)
+        # q_next[done_batch] = 0.0
+        # q_target = reward_batch + self.gamma * torch.max(q_next, dim=1)[0]
+
+        # loss = self.q_eval.loss(q_target, q_eval).to(self.q_eval.device)
+        # loss.backward()
+        # self.q_eval.optim.step()
+
+        q_pred = torch.add(V_s, (A_s - A_s.mean(dim=1, keepdim=True)))[indicies, actions_T]
+        q_next = torch.add(V_s_, (A_s_ - A_s_.mean(dim=1, keepdim=True)))
+        q_eval = torch.add(V_s_eval, (A_s_eval - A_s_eval.mean(dim=1, keepdim=True)))[indicies, actions_T]
+
+        max_actions = torch.argmax(q_eval, dim=1)
+
+        q_next[dones_T] = 0.0
+        q_target = rewards_T + self.gamma * q_next[indicies, max_actions]
+
+        loss = self.q_eval.loss(q_target, q_pred).to(self.q_eval.device)
         loss.backward()
         self.q_eval.optim.step()
+        self.learn_step_counter += 1
 
         self.epsilon = self.epsilon - self.eps_dec if self.epsilon > self.eps_min else self.eps_min
 
