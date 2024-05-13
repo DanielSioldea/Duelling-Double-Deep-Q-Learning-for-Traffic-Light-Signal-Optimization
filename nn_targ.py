@@ -13,6 +13,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import mplcursors
+import action_list as al
 
 # SET UP SUMO TRACI CONNECTION
 if 'SUMO_HOME' in os.environ:
@@ -38,7 +39,9 @@ def get_options():
 def incoming_cont_edges(light):
     controlled_links = traci.trafficlight.getControlledLinks(light)
     incoming_lanes = {link[0][0] for link in controlled_links}
+    # print(f"The incoming lanes for light {light} are {incoming_lanes}")
     incoming_edges = {lane.split('_')[0] for lane in incoming_lanes if traci.lane.getLinks(lane)}
+    # print(f"The incoming edges for light {light} are {incoming_edges}")
     # print(f"The incoming edges for light {light} are {incoming_edges}")
     return incoming_edges
 
@@ -259,7 +262,8 @@ def main():
     sumoBinary = checkBinary('sumo')
     # PICK CONFIGURATION FILE
     # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
-    traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
+    # traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
+    traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
     
     # DEFINE NETWORK PARAMETERS
     waiting_time = list()
@@ -290,40 +294,18 @@ def main():
 
     # TRAIN MODEL
     for epoch in tqdm(range(epochs), desc="Epochs"):
+
+        # RUN EVERY 5 EPOCHS ON SUMO-GUI
+        # if epoch % 5 == 0:
+        #     sumoBinary = checkBinary('sumo-gui')
+        # else:
+        #     sumoBinary = checkBinary('sumo')
+        sumoBinary = checkBinary('sumo')
+
         # SELECT CONFIGURATION FILE FOR SIMULATION
         # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
-        traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
-
-        # ACTIONS FOR 4-WAY INTERSECTIONS
-        actions_4_way = [
-            [60, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
-            [60, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"],
-            [50, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
-            [50, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"],
-            [40, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
-            [40, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"],
-            [30, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
-            [30, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"],
-            [20, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
-            [20, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"],
-            [10, "rrrrGGGgrrrrGGGg", 5, "rrrryyyyrrrryyyy"],
-            [10, "GGGgrrrrGGGgrrrr", 5, "yyyyrrrryyyyrrrr"]
-        ]
-        # ACTIONS FOR 3-WAY INTERSECTIONS
-        actions_3_way = [
-            [60, "GGgrrGGG", 5, "yyyrryyy"],
-            [60, "rrrGGGrr", 5, "rrryyyrr"],
-            [50, "GGgrrGGG", 5, "yyyrryyy"],
-            [50, "rrrGGGrr", 5, "rrryyyrr"],
-            [40, "GGgrrGGG", 5, "yyyrryyy"],
-            [40, "rrrGGGrr", 5, "rrryyyrr"],
-            [30, "GGgrrGGG", 5, "yyyrryyy"],
-            [30, "rrrGGGrr", 5, "rrryyyrr"],
-            [20, "GGgrrGGG", 5, "yyyrryyy"],
-            [20, "rrrGGGrr", 5, "rrryyyrr"],
-            [10, "GGgrrGGG", 5, "yyyrryyy"],
-            [10, "rrrGGGrr", 5, "rrryyyrr"]
-        ]
+        # traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
+        traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
 
         # INITIALIZE VARIABLES AND LISTS
         step = 0
@@ -346,27 +328,39 @@ def main():
             # GET CURRENT PHASE DURATION AND STATE
             current_duration[light] = traci.trafficlight.getPhaseDuration(light)
             current_phase[light] = traci.trafficlight.getRedYellowGreenState(light)
+            # print(f"light {light} has a length of {len(current_phase[light])}")
 
             # DEFINE INITIAL YELLOW PHASE 
             initial_yellow_phase[light] = current_phase[light].replace('G', 'y').replace('g', 'y')
+
+            # GET MAIN SIGNALIZED EDGES
+            target_edges = incoming_cont_edges(light)
+
+            # GET SURROUNDING SIGNALIZED EDGES
+            surrounding_edges = surrounding_cont_edges(light, lights)
+
+            # SELECT 4-WAY ACTIONS FROM ACTION LIST (FOR 4-WAY INT ONLY)
+            if len(target_edges) == 4:
+                actions = al.actions_4_way
+
+            # SELECT APPROPRIATE ACTION LIST BASED ON LIGHT INDEX COUNT (FOR 3-WAY INT ONLY)
+            if len(target_edges) == 3:
+                if len(current_phase[light]) == 8:
+                    actions = al.actions_3_way_7_idx
+                else:
+                    actions = al.actions_3_way_8_idx
+            
+            # print(f"actions for light {light} are {actions}")
 
         while step <= end_time:
             
             # SIMULATION STEP
             traci.simulationStep()
             step += 1
+            # print(f"Step: {step}")
 
-            for light_id, light in enumerate(lights):
-                # MAIN SIGNALIZED EDGES
-                target_edges = incoming_cont_edges(light)
-                
-                # SELECT ACTIONS BASED ON NUMBER OF EDGES
-                if len(target_edges) == 4:
-                    actions = actions_4_way
-                else:
-                    actions = actions_3_way
-                    
-                # GET QUEUE INFORMATION
+            for light_id, light in enumerate(lights):                  
+                # TARGET EDGE QUEUE INFORMATION
                 vehicles_per_edge, vehicle_wait_time, max_wait_time = queue_info(target_edges)
 
                 # GET TOTAL VEHICLES AND MAX WAIT TIME
@@ -376,8 +370,7 @@ def main():
                 max_wait = sum(max_wait_time.values())
                 wait_total.append(max_wait)
 
-                # SURROUNDING SIGNALIZED EDGES
-                surrounding_edges = surrounding_cont_edges(light, lights)
+                # # SURROUNDING EDGE QUEUE INFORMATION
                 S_vehicles_per_edge, S_vehicle_wait_time, S_max_wait_time = queue_info(surrounding_edges)
                 S_vehicle_total = sum(S_vehicles_per_edge.values())
                 S_max_wait = sum(S_max_wait_time.values())
@@ -443,7 +436,7 @@ def main():
         # APPEND AVERAGES FOR PLOT
         waiting_time.append(average_max_wait)
         waiting_ammt.append(average_count)
-        print(f"Average waiting time: {average_max_wait} | Average vehicle count: {average_count}")
+        print(f"Average waiting time: {round(average_max_wait,2)} | Average vehicle count: {round(average_count)}")
         print("\n")
 
     # PLOT RESULTS
@@ -463,7 +456,7 @@ def main():
     fig.suptitle("Traffic Light Control with Neural Networks")
     # plt.savefig('Data/Figures/First_NN_Test_100_Epochs.png')
     plt.subplots_adjust(hspace=0.5)
-    mplcursors.cursor(hover=True)
+    # mplcursors.cursor(hover=True)
     plt.show()
 
 # RUN MAIN FUNCTION
