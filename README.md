@@ -16,27 +16,27 @@ The above video shows the installation process as well as setting the correct pa
 pip install -r requirements.txt
 
 # Creating network file from OSM
-Go to https://www.openstreetmap.org/ and select the region you want to use.
-Export as osm file, rename to whatever you want
-In folder with osm map, click the folder path and type 'cmd". Press enter.
+Go to https://www.openstreetmap.org/ and select the region you want to use.<br>
+Export as osm file, rename to whatever you want<br>
+In folder with osm map, click the folder path and type 'cmd". Press enter.<br>
 Enter the command: netconvert --osm-files osmFile.osm --output-file networkFileName.net.xml --geometry.remove --roundabouts.guess --ramps.guess --junctions.join --tls.guess-signals --tls.remove-simple --tls.join
 
 # Creating a network file in Netedit
-Open Netedit software by pressing windows key and typing 'Netedit'.
-Create a new network file.
-Build the network.
+Open Netedit software by pressing windows key and typing 'Netedit'.<br>
+Create a new network file.<br>
+Build the network.<br>
 Save network file as networkFileName.net.xml
 
 # Creating random trips:
-Open the cmd window by clicking the folder path location of the net.xml file in the file explorer, and entering 'cmd' and pressing enter.
-Enter the command: python "path-to-randomtrips.py" -n networkFileName.net.xml -e endTimeInSeconds -o networkFileName.trips.xml
-A new .trips.xml file should be created in the folder.
-Enter the command: duarouter -n networkFileName.net.xml --route-files networkFileName.trips.xml -o networkFileName.rou.xml --ignore-errors
+Open the cmd window by clicking the folder path location of the net.xml file in the file explorer, and entering 'cmd' and pressing enter.<br>
+Enter the command: python "path-to-randomtrips.py" -n networkFileName.net.xml -e endTimeInSeconds -o networkFileName.trips.xml<br>
+A new .trips.xml file should be created in the folder.<br>
+Enter the command: duarouter -n networkFileName.net.xml --route-files networkFileName.trips.xml -o networkFileName.rou.xml --ignore-errors<br>
 A new .rou.xml file should be created in the folder.
 
 # Creating config file:
-In the same folder as your .net.xml file, create a new .txt document. Rename it to networkFileName.sumocfg
-Paste the following configuration data:
+In the same folder as your .net.xml file, create a new .txt document. Rename it to networkFileName.sumocfg<br>
+Paste the following configuration data:<br>
 <?xml version="1.0" encoding="UTF-8"?>
 
 <!-- generated on enter-date-here by Eclipse SUMO sumo Version 1.19.0
@@ -65,13 +65,13 @@ Paste the following configuration data:
 
 </configuration>
 
-Fill in the net-file and route-file values with the corresponding file names.
-Set the end time value to the corresponding end time.
-Save file.
-Open SUMO-gui by pressing windows key and typing 'sumo-gui' and pressing enter.
-Open the configuration file.
+Fill in the net-file and route-file values with the corresponding file names.<br>
+Set the end time value to the corresponding end time.<br>
+Save file.<br>
+Open SUMO-gui by pressing windows key and typing 'sumo-gui' and pressing enter.<br>
+Open the configuration file.<br>
 Play simulation to verify it works.
 
 # Editing SUMO light orientation:
-Go into net.xml file and locate the "linkIndex" values of the desired light.
+Go into net.xml file and locate the "linkIndex" values of the desired light.<br>
 Re-arrange index to account for action space choices.
