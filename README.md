@@ -19,7 +19,7 @@ pip install -r requirements.txt
 Go to https://www.openstreetmap.org/ and select the region you want to use.<br>
 Export as osm file, rename to whatever you want<br>
 In folder with osm map, click the folder path and type 'cmd". Press enter.<br>
-Enter the command: ```netconvert --osm-files osmFile.osm --output-file networkFileName.net.xml --geometry.remove --roundabouts.guess --ramps.guess --junctions.join --tls.guess-signals --tls.remove-simple --tls.join```
+Enter the command: <br> ```netconvert --osm-files osmFile.osm --output-file networkFileName.net.xml --geometry.remove --roundabouts.guess --ramps.guess --junctions.join --tls.guess-signals --tls.remove-simple --tls.join```
 
 # Creating a network file in Netedit
 Open Netedit software by pressing windows key and typing 'Netedit'.<br>
@@ -29,9 +29,9 @@ Save network file as networkFileName.net.xml
 
 # Creating random trips:
 Open the cmd window by clicking the folder path location of the net.xml file in the file explorer, and entering 'cmd' and pressing enter.<br>
-Enter the command: ```python "path-to-randomtrips.py" -n networkFileName.net.xml -e endTimeInSeconds -o networkFileName.trips.xml```<br>
+Enter the command: <br> ```python "path-to-randomtrips.py" -n networkFileName.net.xml -e endTimeInSeconds -o networkFileName.trips.xml```<br>
 A new .trips.xml file should be created in the folder.<br>
-Enter the command: ```duarouter -n networkFileName.net.xml --route-files networkFileName.trips.xml -o networkFileName.rou.xml --ignore-errors```<br>
+Enter the command: <br> ```duarouter -n networkFileName.net.xml --route-files networkFileName.trips.xml -o networkFileName.rou.xml --ignore-errors```<br>
 A new .rou.xml file should be created in the folder.
 
 # Creating config file:
