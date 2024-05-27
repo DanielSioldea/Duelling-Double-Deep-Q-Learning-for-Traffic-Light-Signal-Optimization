@@ -45,7 +45,7 @@ def incoming_cont_edges(light):
     incoming_edges = {lane.split('_')[0] for lane in incoming_lanes if traci.lane.getLinks(lane)}
     # print(f"The incoming edges for light {light} are {incoming_edges}")
     # print(f"The incoming edges for light {light} are {incoming_edges}")
-    return incoming_edges, incoming_lanes
+    return incoming_edges
 
 # FUNCTION TO GET SURROUNDING EDGES FOR A GIVEN TARGET LIGHT; IF LIGHT IS WITHIN 500 METERS OF TARGET LIGHT, ADD TO LIST
 def surrounding_cont_edges(target_light, light_list, distance_buffer=500):
@@ -73,13 +73,14 @@ def queue_info(edges):
         vehicles_per_edge[i] = 0
         vehicle_wait_time[i] = 0
         max_wait_time[i] = 0
-        vehicles_per_edge[i] = traci.edge.getLastStepHaltingNumber(i)
+        #vehicles_per_edge[i] = traci.edge.getLastStepHaltingNumber(i)
         vehicle_id[i] = traci.edge.getLastStepVehicleIDs(i)
         for v in vehicle_id[i]:
             lane_id = traci.vehicle.getLaneID(v)
             lane_len = traci.lane.getLength(lane_id)
             veh_position = traci.vehicle.getLanePosition(v)
             if lane_len - veh_position <= 50:
+                vehicles_per_edge[i] += 1
                 current_wait_time = traci.vehicle.getWaitingTime(v)
                 vehicle_wait_time[i] += current_wait_time
                 if current_wait_time > max_wait_time[i]:
@@ -370,6 +371,8 @@ def main():
         current_phase = dict()
         initial_yellow_phase = dict()
         prev_action = dict()
+        target_edges = dict()
+        surrounding_edges = dict()
         flow_rate_EW = {light: [] for light in lights}
         flow_rate_NS = {light: [] for light in lights}
         counted_vehicles_EW = set()
@@ -395,17 +398,17 @@ def main():
             initial_yellow_phase[light] = current_phase[light].replace('G', 'y').replace('g', 'y')
 
             # GET MAIN SIGNALIZED EDGES
-            target_edges, target_lanes = incoming_cont_edges(light)
+            target_edges[light] = incoming_cont_edges(light)
 
             # GET SURROUNDING SIGNALIZED EDGES
-            surrounding_edges = surrounding_cont_edges(light, lights)
+            surrounding_edges[light] = surrounding_cont_edges(light, lights)
 
             # SELECT 4-WAY ACTIONS FROM ACTION LIST (FOR 4-WAY INT ONLY)
-            if len(target_edges) == 4:
+            if len(target_edges[light]) == 4:
                 actions = al.actions_4_way
 
             # SELECT APPROPRIATE ACTION LIST BASED ON LIGHT INDEX COUNT (FOR 3-WAY INT ONLY)
-            if len(target_edges) == 3:
+            if len(target_edges[light]) == 3:
                 if len(current_phase[light]) == 8:
                     actions = al.actions_3_way_7_idx
                 else:
@@ -422,9 +425,7 @@ def main():
 
             for light_id, light in enumerate(lights):                  
                 # TARGET EDGE QUEUE INFORMATION
-                vehicles_per_edge, vehicle_wait_time, max_wait_time = queue_info(target_edges)
-                # if light == 'J2':
-                #     print(f"Vehicles per edge: {vehicles_per_edge}")
+                vehicles_per_edge, vehicle_wait_time, max_wait_time = queue_info(target_edges[light])
 
                 # GET TOTAL VEHICLES AND MAX WAIT TIME
                 vehicle_total = sum(vehicles_per_edge.values())
@@ -434,7 +435,7 @@ def main():
                 wait_total.append(max_wait)
 
                 # # SURROUNDING EDGE QUEUE INFORMATION
-                S_vehicles_per_edge, S_vehicle_wait_time, S_max_wait_time = queue_info(surrounding_edges)
+                S_vehicles_per_edge, S_vehicle_wait_time, S_max_wait_time = queue_info(surrounding_edges[light])
                 S_vehicle_total = sum(S_vehicles_per_edge.values())
                 S_max_wait = sum(S_max_wait_time.values())
 
