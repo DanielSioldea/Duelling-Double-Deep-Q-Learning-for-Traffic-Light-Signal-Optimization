@@ -7,6 +7,8 @@ import optparse
 from tqdm import tqdm
 from statistics import mean
 import numpy as np
+import pandas as pd
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -43,7 +45,7 @@ def incoming_cont_edges(light):
     incoming_edges = {lane.split('_')[0] for lane in incoming_lanes if traci.lane.getLinks(lane)}
     # print(f"The incoming edges for light {light} are {incoming_edges}")
     # print(f"The incoming edges for light {light} are {incoming_edges}")
-    return incoming_edges
+    return incoming_edges, incoming_lanes
 
 # FUNCTION TO GET SURROUNDING EDGES FOR A GIVEN TARGET LIGHT; IF LIGHT IS WITHIN 500 METERS OF TARGET LIGHT, ADD TO LIST
 def surrounding_cont_edges(target_light, light_list, distance_buffer=500):
@@ -74,10 +76,14 @@ def queue_info(edges):
         vehicles_per_edge[i] = traci.edge.getLastStepHaltingNumber(i)
         vehicle_id[i] = traci.edge.getLastStepVehicleIDs(i)
         for v in vehicle_id[i]:
-            current_wait_time = traci.vehicle.getWaitingTime(v)
-            vehicle_wait_time[i] += current_wait_time
-            if current_wait_time > max_wait_time[i]:
-                max_wait_time[i] = current_wait_time
+            lane_id = traci.vehicle.getLaneID(v)
+            lane_len = traci.lane.getLength(lane_id)
+            veh_position = traci.vehicle.getLanePosition(v)
+            if lane_len - veh_position <= 50:
+                current_wait_time = traci.vehicle.getWaitingTime(v)
+                vehicle_wait_time[i] += current_wait_time
+                if current_wait_time > max_wait_time[i]:
+                    max_wait_time[i] = current_wait_time
 
     return vehicles_per_edge, vehicle_wait_time, max_wait_time
 
@@ -85,6 +91,45 @@ def queue_info(edges):
 def adjust_traffic_light(junction, junc_time, junc_state):
     traci.trafficlight.setRedYellowGreenState(junction, junc_state)
     traci.trafficlight.setPhaseDuration(junction, junc_time)
+
+def closest_loops(light):
+    loop_ids = traci.inductionloop.getIDList()
+    light_pos = traci.junction.getPosition(light)
+    # print(f"Light position: {light_pos}") 
+    close_loops = {}
+    close_loops[light] = []
+    for loop_id in loop_ids:
+        lane_id = traci.inductionloop.getLaneID(loop_id)
+        loop_pos = traci.inductionloop.getPosition(loop_id)
+        lane_shape = traci.lane.getShape(lane_id)
+
+        lane_len = traci.lane.getLength(lane_id)
+        ratio = loop_pos / lane_len
+        loop_pos = (
+            lane_shape[0][0] * (1 - ratio) + lane_shape[-1][0] * ratio,
+            lane_shape[0][1] * (1 - ratio) + lane_shape[-1][1] * ratio
+        )
+
+        distance = math.sqrt((light_pos[0] - loop_pos[0])**2 + (light_pos[1] - loop_pos[1])**2)
+        direction = None
+        if distance < 25:
+            start, end = lane_shape[0], lane_shape[-1]
+            dx = end[0] - start[0]
+            dy = end[1] - start[1]
+            angle = math.atan2(dy, dx)  # Angle in radians
+            angle = math.degrees(angle) % 360
+        
+            if 45 <= angle < 135:
+                direction = "N"
+            elif 135 <= angle < 225:
+                direction = "W"
+            elif 225 <= angle < 315:
+                direction = "S"
+            else:
+                direction = "E"
+
+            close_loops[light].append((loop_id, direction))
+    return close_loops
 
 # NEURAL NETWORK
 class TrafficController(nn.Module):
@@ -270,12 +315,14 @@ def main():
     waiting_ammt = list()
     epochs = 30
     load_checkpoint = False
+    closest_loops_dict = {}
+    init_action = {}
     
     lights = traci.trafficlight.getIDList() 
     print(f"Light IDs: {lights}")
     light_num = list(range(len(lights)))
     print(f"Light Numbers: {light_num}")
-    end_time = traci.simulation.getEndTime()
+    end_time = traci.simulation.getEndTime()/0.25
     max_state_size = 24
     agent = TrafficAgent(
         gamma=0.99, 
@@ -287,6 +334,12 @@ def main():
         output_size=12, 
         batch_size=64, 
         lights=light_num)
+    
+    for light in lights:
+        # GET CLOSEST INDUCTION LOOPS
+        close_loop = closest_loops(light)
+        closest_loops_dict[light] = close_loop[light]
+        
     traci.close()
 
     if load_checkpoint:
@@ -317,16 +370,24 @@ def main():
         current_phase = dict()
         initial_yellow_phase = dict()
         prev_action = dict()
-        action = 999999999
+        flow_rate_EW = {light: [] for light in lights}
+        flow_rate_NS = {light: [] for light in lights}
+        counted_vehicles_EW = set()
+        counted_vehicles_NS = set()
 
         for light_id, light in enumerate(lights):
+           
             # GET INITIAL PHASE DURATION; SET STATES TO 0 BEFORE SIMULATION
-            light_times[light] = traci.trafficlight.getPhaseDuration(light)
+            light_times[light] = traci.trafficlight.getPhaseDuration(light) / 0.25
             prev_state[light_id] = 0
             prev_action[light_id] = 0
 
+            # SET INITIAL ACTION
+            init_action[light] = 1
+            # print(f"Initial action for light {light} is {init_action[light]}")
+
             # GET CURRENT PHASE DURATION AND STATE
-            current_duration[light] = traci.trafficlight.getPhaseDuration(light)
+            current_duration[light] = traci.trafficlight.getPhaseDuration(light) / 0.25
             current_phase[light] = traci.trafficlight.getRedYellowGreenState(light)
             # print(f"light {light} has a length of {len(current_phase[light])}")
 
@@ -334,7 +395,7 @@ def main():
             initial_yellow_phase[light] = current_phase[light].replace('G', 'y').replace('g', 'y')
 
             # GET MAIN SIGNALIZED EDGES
-            target_edges = incoming_cont_edges(light)
+            target_edges, target_lanes = incoming_cont_edges(light)
 
             # GET SURROUNDING SIGNALIZED EDGES
             surrounding_edges = surrounding_cont_edges(light, lights)
@@ -362,6 +423,8 @@ def main():
             for light_id, light in enumerate(lights):                  
                 # TARGET EDGE QUEUE INFORMATION
                 vehicles_per_edge, vehicle_wait_time, max_wait_time = queue_info(target_edges)
+                # if light == 'J2':
+                #     print(f"Vehicles per edge: {vehicles_per_edge}")
 
                 # GET TOTAL VEHICLES AND MAX WAIT TIME
                 vehicle_total = sum(vehicles_per_edge.values())
@@ -375,11 +438,32 @@ def main():
                 S_vehicle_total = sum(S_vehicles_per_edge.values())
                 S_max_wait = sum(S_max_wait_time.values())
 
+                # SET UNIQUE VEHICLE COUNTS TO 0
+                unique_veh_EW = 0
+                unique_veh_NS = 0
+                # GET DIRECTIONAL FLOW RATES FOR EACH LIGHT
+                for loop in closest_loops_dict[light]:
+                    if loop[1] == 'E' or loop[1] == 'W':
+                        flow_EW = set(traci.inductionloop.getLastStepVehicleIDs(loop[0]))
+                        unique_veh = len(flow_EW - counted_vehicles_EW)
+                        counted_vehicles_EW.update(flow_EW)
+                        unique_veh_EW += unique_veh
+                    if loop[1] == 'N' or loop[1] == 'S':
+                        flow_NS = set(traci.inductionloop.getLastStepVehicleIDs(loop[0]))
+                        unique_veh = len(flow_NS - counted_vehicles_NS)
+                        counted_vehicles_NS.update(flow_NS)
+                        unique_veh_NS += unique_veh
+                flow_rate_NS[light].append(unique_veh_NS)
+                flow_rate_EW[light].append(unique_veh_EW)
+
                 light_times[light] -= 1
+
 
                 # IF LIGHT IS YELLOW AND TIME IS UP, SELECT ACTION
                 if light_times[light] == 0 and 'y' in current_phase[light]:
                     # GET STATE VALUES IN FORM [Edge1_value, Edge2_value, ...]
+                    # Look into normalizing the state values [0, 1]
+                    # Look into getting traffic flow for state value - possible average of the flow in both directions
                     state_ = list(vehicles_per_edge.values()) + list(max_wait_time.values()) \
                                 + list(S_vehicles_per_edge.values()) + list(S_max_wait_time.values())
                     state_ += [0] * (max_state_size - len(state_))
@@ -388,6 +472,12 @@ def main():
 
                     # REWARD FUNCTION WITH VARYING WEIGHTS ON EACH VALUE
                     reward = -1 * (round(1*max_wait + 1*vehicle_total + 0.05*S_max_wait + 0.05*S_vehicle_total, 2))
+                    # print(f"Reward: {reward}")
+                    reward_norm = 2 / (1 + np.exp(-reward)) - 2
+
+                    # Look into normalizing the reward [-1, 0]
+                    # Look into getting traffic flow for reward value - possible average of the flow in both directions
+                    # penalty if signals change too often: average taffic flow - gamma*low_time_penalty(time)
                     # print(f"Reward: {reward}")
 
                     # STORE TRANSITION
@@ -401,26 +491,27 @@ def main():
                     adjust_traffic_light(light, actions[action][0], actions[action][1])
                     current_duration[light] = actions[action][0]
                     current_phase[light] = actions[action][1]
-                    light_times[light] = current_duration[light] - 1
+                    light_times[light] = (current_duration[light] / 0.25) - 1
 
                     # LEARN
                     agent.learn(light_id)
                     continue
 
                 # IF LIGHT IS GREEN AND TIME IS UP AND NOT IN INITIAL STATE, SELECT CORRESPONDING YELLOW LIGHT ACTION   
-                elif 'G' in current_phase[light] and light_times[light] == 0 and action != 999999999 or \
-                         'g' in current_phase[light] and light_times[light] == 0 and action != 999999999:
+                elif 'G' in current_phase[light] and light_times[light] == 0 and init_action[light] != 1 or \
+                         'g' in current_phase[light] and light_times[light] == 0 and init_action[light] != 1:
                     adjust_traffic_light(light, actions[action][2], actions[action][3])  
                     current_phase[light] = actions[action][3]
-                    light_times[light] = actions[action][2] - 1
+                    light_times[light] = (actions[action][2] / 0.25) - 1
                     continue
                 
                 # IF LIGHT IS GREEN AND TIME IS UP AND IN INITIAL STATE, SELECT INITIAL YELLOW LIGHT ACTION
-                elif ('G' in current_phase[light] and light_times[light] == 0 and action == 999999999) or \
-                       ('g' in current_phase[light] and light_times[light] == 0 and action == 999999999):
+                elif ('G' in current_phase[light] and light_times[light] == 0 and init_action[light] == 1) or \
+                       ('g' in current_phase[light] and light_times[light] == 0 and init_action[light] == 1):
                     adjust_traffic_light(light, 5, initial_yellow_phase[light])
                     current_phase[light] = initial_yellow_phase[light]
-                    light_times[light] = 5 - 1
+                    light_times[light] = (5 / 0.25) - 1
+                    init_action[light] = 0
                     continue
 
         
@@ -430,6 +521,7 @@ def main():
         # GET AVERAGES PERFORMANCE EVALUATION
         average_max_wait = mean(wait_total)
         average_count = mean(count_total)
+
         # CLOSE SUMO FOR NEXT EPOCH
         traci.close()
 
@@ -458,6 +550,25 @@ def main():
     plt.subplots_adjust(hspace=0.5)
     # mplcursors.cursor(hover=True)
     plt.show()
+
+    # PLOTTING TRAFFIC FLOW RATES FOR EACH LIGHT
+    # for light in lights:
+    #     plt.figure(figsize=(10, 5))
+    #     # Convert the flow rates to pandas Series
+    #     flow_rate_EW_series = pd.Series(flow_rate_EW[light])
+    #     flow_rate_NS_series = pd.Series(flow_rate_NS[light])
+        
+    #     # Calculate the rolling averages
+    #     rolling_avg_EW = flow_rate_EW_series.rolling(window=38).mean()
+    #     rolling_avg_NS = flow_rate_NS_series.rolling(window=37).mean()
+        
+    #     plt.stackplot(range(1, step+1), rolling_avg_EW, rolling_avg_NS, labels=['East-West', 'North-South'])
+    #     plt.title(f'Rolling average traffic flow for light {light}')
+    #     plt.xlabel('Time step')
+    #     plt.ylabel('Flow rate')
+    #     plt.legend(loc='upper left')
+
+    # plt.show() 
 
 # RUN MAIN FUNCTION
 if __name__ == "__main__":
