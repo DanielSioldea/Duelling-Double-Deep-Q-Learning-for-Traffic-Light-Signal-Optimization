@@ -146,7 +146,7 @@ class TrafficController(nn.Module):
 
         self.hidden1 = nn.Linear(self.input_size, self.hidden1_size)
         self.hidden2 = nn.Linear(self.hidden1_size, self.hidden2_size)                             
-        self.output2_A = nn.Linear(self.hidden2_size, self.output_size)   
+        self.output_A = nn.Linear(self.hidden2_size, self.output_size)   
 
         self.output_V = nn.Linear(self.hidden1_size, 1)
                               
@@ -166,7 +166,7 @@ class TrafficController(nn.Module):
         flat2 = F.relu(self.hidden2(flat1))
 
         V = self.output_V(flat2)
-        A = self.output2_A(flat2)
+        A = self.output_A(flat2)
         return V, A
     
     def save_checkpoint(self):
@@ -255,16 +255,21 @@ class TrafficAgent:
            self.learn_step_counter % self.replace_target__net == 0:
             self.q_next.load_state_dict(self.q_eval.state_dict())
 
-    def save_models(self):
+    def save_checkpoint(self):
         self.q_eval.save_checkpoint()
         self.q_next.save_checkpoint()
 
-    def load_models(self):
+    def load_checkpoint(self):
         self.q_eval.load_checkpoint()
         self.q_next.load_checkpoint()
 
+    def save_model(self, model_name):
+        torch.save(self.q_eval.state_dict(),f'Models/{model_name}.bin')
+
     def learn(self, light):
         self.q_eval.optim.zero_grad()
+        # print(f"Memory counter: {self.memory[light]['mem_cntr']}")
+        # print(f"Batch size: {self.batch_size}")
         if self.memory[light]['mem_cntr'] < self.batch_size:
             return
         
@@ -296,11 +301,14 @@ class TrafficAgent:
         
 
         loss = self.q_eval.loss(q_target, q_pred).to(self.q_eval.device)
+        # print(f"Loss: {loss}")
         loss.backward()
         self.q_eval.optim.step()
         self.learn_step_counter += 1
 
         self.epsilon = self.epsilon - self.eps_dec if self.epsilon > self.eps_min else self.eps_min
+
+        return loss
 
 # MAIN FUNCTION
 def main():
@@ -308,16 +316,19 @@ def main():
     sumoBinary = checkBinary('sumo')
     # PICK CONFIGURATION FILE
     # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
-    # traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
-    traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
+    traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
+    # traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
     
     # DEFINE NETWORK PARAMETERS
     waiting_time = list()
     waiting_ammt = list()
-    epochs = 30
+    loss_total = list()
+    epochs = 50
     load_checkpoint = False
     closest_loops_dict = {}
     init_action = {}
+    best_time = np.inf
+
     
     lights = traci.trafficlight.getIDList() 
     print(f"Light IDs: {lights}")
@@ -344,12 +355,12 @@ def main():
     traci.close()
 
     if load_checkpoint:
-        agent.load_models()
+        agent.load_checkpoint()
 
     # TRAIN MODEL
     for epoch in tqdm(range(epochs), desc="Epochs"):
 
-        # RUN EVERY 5 EPOCHS ON SUMO-GUI
+        # # RUN EVERY 5 EPOCHS ON SUMO-GUI
         # if epoch % 5 == 0:
         #     sumoBinary = checkBinary('sumo-gui')
         # else:
@@ -358,13 +369,14 @@ def main():
 
         # SELECT CONFIGURATION FILE FOR SIMULATION
         # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
-        # traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
-        traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
+        traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
+        # traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
 
         # INITIALIZE VARIABLES AND LISTS
         step = 0
         wait_total = []
         count_total = []
+        total_loss = []
         prev_state = dict()
         light_times = dict()
         current_duration = dict()
@@ -496,6 +508,11 @@ def main():
 
                     # LEARN
                     agent.learn(light_id)
+                    loss = agent.learn(light_id)
+                    if loss == None:
+                        loss = 0.0
+                    # print(f"Loss: {loss}")
+                    total_loss.append(loss)
                     continue
 
                 # IF LIGHT IS GREEN AND TIME IS UP AND NOT IN INITIAL STATE, SELECT CORRESPONDING YELLOW LIGHT ACTION   
@@ -517,11 +534,18 @@ def main():
 
         
         if epoch > 0 and epoch % 10 == 0:
-            agent.save_models()
+            agent.save_checkpoint()
 
         # GET AVERAGES PERFORMANCE EVALUATION
         average_max_wait = mean(wait_total)
         average_count = mean(count_total)
+        # average_loss = mean(total_loss)
+        average_loss = mean([loss.item() if torch.is_tensor(loss) else loss for loss in total_loss])
+
+        # SAVING BEST MODEL
+        if average_max_wait < best_time:
+            best_time = average_max_wait
+            agent.save_model("BigGridTest_model")
 
         # CLOSE SUMO FOR NEXT EPOCH
         traci.close()
@@ -529,7 +553,9 @@ def main():
         # APPEND AVERAGES FOR PLOT
         waiting_time.append(average_max_wait)
         waiting_ammt.append(average_count)
+        loss_total.append(average_loss)
         print(f"Average waiting time: {round(average_max_wait,2)} | Average vehicle count: {round(average_count)}")
+        print(f"Average loss: {round(average_loss, 2)}")
         print("\n")
 
     # PLOT RESULTS
@@ -550,6 +576,14 @@ def main():
     # plt.savefig('Data/Figures/First_NN_Test_100_Epochs.png')
     plt.subplots_adjust(hspace=0.5)
     # mplcursors.cursor(hover=True)
+    plt.show()
+
+    # PLOTTING LOSS OVER EPOCHS
+    plt.figure()
+    plt.plot(range(1, len(loss_total)+1), loss_total)
+    plt.xlabel("Epoch Number")
+    plt.ylabel("Loss")
+    plt.title(f"Loss Over {epochs} Epochs")
     plt.show()
 
     # PLOTTING TRAFFIC FLOW RATES FOR EACH LIGHT
