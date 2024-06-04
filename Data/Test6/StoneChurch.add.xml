@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- generated on 2024-06-03 18:07:30 by Eclipse SUMO netedit Version 1.19.0
+-->
+
+<additional xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/additional_file.xsd">
+    <!-- Detectors -->
+    <inductionLoop id="e1_0" lane="E20_0" pos="85.52" period="0.25" file="e1_0.xml"/>
+    <inductionLoop id="e1_1" lane="E20_1" pos="85.57" period="0.25" file="e1_1.xml"/>
+    <inductionLoop id="e1_10" lane="E24_0" pos="182.07" period="0.25" file="e1_10.xml"/>
+    <inductionLoop id="e1_11" lane="E25_0" pos="202.16" period="0.25" file="e1_11.xml"/>
+    <inductionLoop id="e1_12" lane="E25_2" pos="202.15" period="0.25" file="e1_12.xml"/>
+    <inductionLoop id="e1_13" lane="E25_1" pos="202.12" period="0.25" file="e1_13.xml"/>
+    <inductionLoop id="e1_14" lane="-E29_2" pos="495.33" period="0.25" file="e1_14.xml"/>
+    <inductionLoop id="e1_15" lane="-E29_0" pos="495.38" period="0.25" file="e1_15.xml"/>
+    <inductionLoop id="e1_16" lane="-E29_1" pos="495.38" period="0.25" file="e1_16.xml"/>
+    <inductionLoop id="e1_17" lane="-E27_2" pos="282.31" period="0.25" file="e1_17.xml"/>
+    <inductionLoop id="e1_18" lane="-E27_1" pos="282.35" period="0.25" file="e1_18.xml"/>
+    <inductionLoop id="e1_19" lane="-E27_0" pos="282.35" period="0.25" file="e1_19.xml"/>
+    <inductionLoop id="e1_2" lane="E18_1" pos="185.59" period="0.25" file="e1_2.xml"/>
+    <inductionLoop id="e1_20" lane="E30_2" pos="476.37" period="0.25" file="e1_20.xml"/>
+    <inductionLoop id="e1_21" lane="E30_1" pos="476.39" period="0.25" file="e1_21.xml"/>
+    <inductionLoop id="e1_22" lane="E30_0" pos="476.40" period="0.25" file="e1_22.xml"/>
+    <inductionLoop id="e1_23" lane="-E31_1" pos="385.55" period="0.25" file="e1_23.xml"/>
+    <inductionLoop id="e1_24" lane="-E31_0" pos="385.53" period="0.25" file="e1_24.xml"/>
+    <inductionLoop id="e1_25" lane="-E32_1" pos="427.00" period="0.25" file="e1_25.xml"/>
+    <inductionLoop id="e1_26" lane="-E32_0" pos="427.05" period="0.25" file="e1_26.xml"/>
+    <inductionLoop id="e1_27" lane="-E32_2" pos="427.06" period="0.25" file="e1_27.xml"/>
+    <inductionLoop id="e1_28" lane="E37_0" pos="181.22" period="0.25" file="e1_28.xml"/>
+    <inductionLoop id="e1_29" lane="E37_1" pos="181.26" period="0.25" file="e1_29.xml"/>
+    <inductionLoop id="e1_3" lane="E19_1" pos="84.80" period="0.25" file="e1_3.xml"/>
+    <inductionLoop id="e1_30" lane="E37_2" pos="181.26" period="0.25" file="e1_30.xml"/>
+    <inductionLoop id="e1_4" lane="E18_0" pos="185.56" period="0.25" file="e1_4.xml"/>
+    <inductionLoop id="e1_5" lane="E14_1" pos="85.52" period="0.25" file="e1_5.xml"/>
+    <inductionLoop id="e1_6" lane="E19_0" pos="84.78" period="0.25" file="e1_6.xml"/>
+    <inductionLoop id="e1_7" lane="E24_2" pos="182.07" period="0.25" file="e1_7.xml"/>
+    <inductionLoop id="e1_8" lane="E14_0" pos="85.52" period="0.25" file="e1_8.xml"/>
+    <inductionLoop id="e1_9" lane="E24_1" pos="182.05" period="0.25" file="e1_9.xml"/>
+</additional>

@@ -14,7 +14,6 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-import mplcursors
 import action_list as al
 
 # SET UP SUMO TRACI CONNECTION
@@ -87,6 +86,25 @@ def queue_info(edges):
                     max_wait_time[i] = current_wait_time
 
     return vehicles_per_edge, vehicle_wait_time, max_wait_time
+
+# ACTION SELECTION FUNCTION
+# def select_action_list(light, target_edges, current_phase):
+#     actions = []
+#     if len(target_edges) == 4:
+#         if len(current_phase) == 16:
+#             actions = al.actions_4_way_15_idx
+#         elif len(current_phase) == 15:
+#             actions = al.actions_4_way_14_idx
+#         elif len(current_phase) == 14:
+#             actions = al.actions_4_way_13_idx
+#         else:
+#             actions = al.actions_4_way_11_idx
+#     elif len(target_edges) == 3:
+#         if len(current_phase) == 8:
+#             actions = al.actions_3_way_7_idx
+#         else:
+#             actions = al.actions_3_way_8_idx
+#     return actions
 
 # ADJUST TRAFFIC LIGHTS
 def adjust_traffic_light(junction, junc_time, junc_state):
@@ -316,14 +334,15 @@ def main():
     sumoBinary = checkBinary('sumo')
     # PICK CONFIGURATION FILE
     # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
-    traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
+    # traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
     # traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
+    traci.start([sumoBinary, "-c", "Data\Test6\StoneChurch.sumocfg", "--no-warnings"])
     
     # DEFINE NETWORK PARAMETERS
     waiting_time = list()
     waiting_ammt = list()
     loss_total = list()
-    epochs = 50
+    epochs = 30
     load_checkpoint = False
     closest_loops_dict = {}
     init_action = {}
@@ -351,6 +370,7 @@ def main():
         # GET CLOSEST INDUCTION LOOPS
         close_loop = closest_loops(light)
         closest_loops_dict[light] = close_loop[light]
+        print(f"The closest loops for light {light} are {closest_loops_dict[light]}")
         
     traci.close()
 
@@ -369,8 +389,9 @@ def main():
 
         # SELECT CONFIGURATION FILE FOR SIMULATION
         # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
-        traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
+        # traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
         # traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
+        traci.start([sumoBinary, "-c", "Data\Test6\StoneChurch.sumocfg", "--no-warnings"])
 
         # INITIALIZE VARIABLES AND LISTS
         step = 0
@@ -385,6 +406,7 @@ def main():
         prev_action = dict()
         target_edges = dict()
         surrounding_edges = dict()
+        actions = dict()
         flow_rate_EW = {light: [] for light in lights}
         flow_rate_NS = {light: [] for light in lights}
         counted_vehicles_EW = set()
@@ -415,18 +437,22 @@ def main():
             # GET SURROUNDING SIGNALIZED EDGES
             surrounding_edges[light] = surrounding_cont_edges(light, lights)
 
-            # SELECT 4-WAY ACTIONS FROM ACTION LIST (FOR 4-WAY INT ONLY)
+            # SELECT APPROPRIATE ACTION LIST BASED ON LIGHT INDEX COUNT
             if len(target_edges[light]) == 4:
-                actions = al.actions_4_way
-
-            # SELECT APPROPRIATE ACTION LIST BASED ON LIGHT INDEX COUNT (FOR 3-WAY INT ONLY)
-            if len(target_edges[light]) == 3:
-                if len(current_phase[light]) == 8:
-                    actions = al.actions_3_way_7_idx
+                if len(current_phase[light]) == 16:
+                    actions[light] = al.actions_4_way_15_idx
+                elif len(current_phase[light]) == 15:
+                    actions[light] = al.actions_4_way_14_idx
+                elif len(current_phase[light]) == 14:
+                    actions[light] = al.actions_4_way_13_idx
                 else:
-                    actions = al.actions_3_way_8_idx
-            
-            # print(f"actions for light {light} are {actions}")
+                    actions[light] = al.actions_4_way_11_idx
+            elif len(target_edges[light]) == 3:
+                if len(current_phase[light]) == 8:
+                    actions[light] = al.actions_3_way_7_idx
+                else:
+                    actions[light] = al.actions_3_way_8_idx
+
 
         while step <= end_time:
             
@@ -501,9 +527,9 @@ def main():
                     prev_action[light_id] = action
 
                     # ADJUST TRAFFIC LIGHTS
-                    adjust_traffic_light(light, actions[action][0], actions[action][1])
-                    current_duration[light] = actions[action][0]
-                    current_phase[light] = actions[action][1]
+                    adjust_traffic_light(light, actions[light][action][0], actions[light][action][1])
+                    current_duration[light] = actions[light][action][0]
+                    current_phase[light] = actions[light][action][1]
                     light_times[light] = (current_duration[light] / 0.25) - 1
 
                     # LEARN
@@ -518,9 +544,9 @@ def main():
                 # IF LIGHT IS GREEN AND TIME IS UP AND NOT IN INITIAL STATE, SELECT CORRESPONDING YELLOW LIGHT ACTION   
                 elif 'G' in current_phase[light] and light_times[light] == 0 and init_action[light] != 1 or \
                          'g' in current_phase[light] and light_times[light] == 0 and init_action[light] != 1:
-                    adjust_traffic_light(light, actions[action][2], actions[action][3])  
-                    current_phase[light] = actions[action][3]
-                    light_times[light] = (actions[action][2] / 0.25) - 1
+                    adjust_traffic_light(light, actions[light][action][2], actions[light][action][3])  
+                    current_phase[light] = actions[light][action][3]
+                    light_times[light] = (actions[light][action][2] / 0.25) - 1
                     continue
                 
                 # IF LIGHT IS GREEN AND TIME IS UP AND IN INITIAL STATE, SELECT INITIAL YELLOW LIGHT ACTION
@@ -587,23 +613,23 @@ def main():
     plt.show()
 
     # PLOTTING TRAFFIC FLOW RATES FOR EACH LIGHT
-    # for light in lights:
-    #     plt.figure(figsize=(10, 5))
-    #     # Convert the flow rates to pandas Series
-    #     flow_rate_EW_series = pd.Series(flow_rate_EW[light])
-    #     flow_rate_NS_series = pd.Series(flow_rate_NS[light])
+    for light in lights:
+        plt.figure(figsize=(10, 5))
+        # Convert the flow rates to pandas Series
+        flow_rate_EW_series = pd.Series(flow_rate_EW[light])
+        flow_rate_NS_series = pd.Series(flow_rate_NS[light])
         
-    #     # Calculate the rolling averages
-    #     rolling_avg_EW = flow_rate_EW_series.rolling(window=38).mean()
-    #     rolling_avg_NS = flow_rate_NS_series.rolling(window=37).mean()
+        # Calculate the rolling averages
+        rolling_avg_EW = flow_rate_EW_series.rolling(window=38).mean()
+        rolling_avg_NS = flow_rate_NS_series.rolling(window=37).mean()
         
-    #     plt.stackplot(range(1, step+1), rolling_avg_EW, rolling_avg_NS, labels=['East-West', 'North-South'])
-    #     plt.title(f'Rolling average traffic flow for light {light}')
-    #     plt.xlabel('Time step')
-    #     plt.ylabel('Flow rate')
-    #     plt.legend(loc='upper left')
+        plt.stackplot(range(1, step+1), rolling_avg_EW, rolling_avg_NS, labels=['East-West', 'North-South'])
+        plt.title(f'Rolling average traffic flow for light {light}')
+        plt.xlabel('Time step')
+        plt.ylabel('Flow rate')
+        plt.legend(loc='upper left')
 
-    # plt.show() 
+    plt.show() 
 
 # RUN MAIN FUNCTION
 if __name__ == "__main__":
