@@ -28,14 +28,6 @@ from sumolib import checkBinary
 import traci
 import traci.constants as tc
 
-# OPTIONS (CUS WHY NOT)
-def get_options():
-    optParser = optparse.OptionParser()
-    optParser.add_option("--nogui", action="store_true",
-                         default=False, help="run the commandline version of sumo")
-    options, args = optParser.parse_args()
-    return options
-
 # FUNCTION TO GET INCOMING EDGES FOR A GIVEN LIGHT
 def incoming_cont_edges(light):
     controlled_links = traci.trafficlight.getControlledLinks(light)
@@ -329,20 +321,22 @@ class TrafficAgent:
         return loss
 
 # MAIN FUNCTION
-def main():
+def main(train=True, model_name="model", epochs=50):
     # START SUMO FOR INITIAL CONFIGURATION
     sumoBinary = checkBinary('sumo')
     # PICK CONFIGURATION FILE
     # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
     # traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
     # traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
-    traci.start([sumoBinary, "-c", "Data\Test6\StoneChurch.sumocfg", "--no-warnings"])
-    
+    # traci.start([sumoBinary, "-c", "Data\Test6\StoneChurch.sumocfg", "--no-warnings"])
+    # traci.start([sumoBinary, "-c", "Data\TestCARLA\RymalRoadSimplified.sumocfg", "--no-warnings"])
+    traci.start([sumoBinary, "-c", "Data\TestCARLA\TwoIntersectionTest.sumocfg", "--no-warnings"])
+
     # DEFINE NETWORK PARAMETERS
     waiting_time = list()
     waiting_ammt = list()
     loss_total = list()
-    epochs = 30
+    epochs = epochs
     load_checkpoint = False
     closest_loops_dict = {}
     init_action = {}
@@ -353,7 +347,11 @@ def main():
     print(f"Light IDs: {lights}")
     light_num = list(range(len(lights)))
     print(f"Light Numbers: {light_num}")
-    end_time = traci.simulation.getEndTime()/0.25
+    # end_time = traci.simulation.getEndTime()/0.25
+    end_time = traci.simulation.getEndTime()
+    print(f"End time: {end_time}")
+    test_phase = traci.trafficlight.getRedYellowGreenState(lights[0])
+    print(f"Test phase: {test_phase}")
     max_state_size = 24
     agent = TrafficAgent(
         gamma=0.99, 
@@ -371,6 +369,10 @@ def main():
         close_loop = closest_loops(light)
         closest_loops_dict[light] = close_loop[light]
         print(f"The closest loops for light {light} are {closest_loops_dict[light]}")
+
+    if not train:
+        agent.q_eval.load_state_dict(torch.load(f'Models/{model_name}.bin', map_location=agent.q_eval.device))
+
         
     traci.close()
 
@@ -379,19 +381,30 @@ def main():
 
     # TRAIN MODEL
     for epoch in tqdm(range(epochs), desc="Epochs"):
+        # print(f"Epoch: {epoch}")
 
         # # RUN EVERY 5 EPOCHS ON SUMO-GUI
         # if epoch % 5 == 0:
         #     sumoBinary = checkBinary('sumo-gui')
         # else:
         #     sumoBinary = checkBinary('sumo')
-        sumoBinary = checkBinary('sumo')
+        # OPEN GUI FOR TESTING
+        if train:
+            # if epoch == 1 or epoch == 29:
+            #     sumoBinary = checkBinary('sumo-gui')
+            # else:
+            #     sumoBinary = checkBinary('sumo')
+            sumoBinary = checkBinary('sumo')
+        else:
+            sumoBinary = checkBinary('sumo-gui')
 
         # SELECT CONFIGURATION FILE FOR SIMULATION
         # traci.start([sumoBinary, "-c", "Data\Test2\SmallGrid.sumocfg", "--no-warnings"])
         # traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
         # traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
-        traci.start([sumoBinary, "-c", "Data\Test6\StoneChurch.sumocfg", "--no-warnings"])
+        # traci.start([sumoBinary, "-c", "Data\Test6\StoneChurch.sumocfg", "--no-warnings"])
+        # traci.start([sumoBinary, "-c", "Data\TestCARLA\RymalRoadSimplified.sumocfg", "--no-warnings"])
+        traci.start([sumoBinary, "-c", "Data\TestCARLA\TwoIntersectionTest.sumocfg", "--no-warnings"])
 
         # INITIALIZE VARIABLES AND LISTS
         step = 0
@@ -415,7 +428,8 @@ def main():
         for light_id, light in enumerate(lights):
            
             # GET INITIAL PHASE DURATION; SET STATES TO 0 BEFORE SIMULATION
-            light_times[light] = traci.trafficlight.getPhaseDuration(light) / 0.25
+            light_times[light] = traci.trafficlight.getPhaseDuration(light)
+            # light_times[light] = traci.trafficlight.getPhaseDuration(light) / 0.25
             prev_state[light_id] = 0
             prev_action[light_id] = 0
 
@@ -424,7 +438,8 @@ def main():
             # print(f"Initial action for light {light} is {init_action[light]}")
 
             # GET CURRENT PHASE DURATION AND STATE
-            current_duration[light] = traci.trafficlight.getPhaseDuration(light) / 0.25
+            current_duration[light] = traci.trafficlight.getPhaseDuration(light)
+            # current_duration[light] = traci.trafficlight.getPhaseDuration(light) / 0.25
             current_phase[light] = traci.trafficlight.getRedYellowGreenState(light)
             # print(f"light {light} has a length of {len(current_phase[light])}")
 
@@ -452,6 +467,7 @@ def main():
                     actions[light] = al.actions_3_way_7_idx
                 else:
                     actions[light] = al.actions_3_way_8_idx
+            # print(f"Actions for light {light} are {actions[light]}")
 
 
         while step <= end_time:
@@ -481,25 +497,25 @@ def main():
                 unique_veh_EW = 0
                 unique_veh_NS = 0
                 # GET DIRECTIONAL FLOW RATES FOR EACH LIGHT
-                for loop in closest_loops_dict[light]:
-                    if loop[1] == 'E' or loop[1] == 'W':
-                        flow_EW = set(traci.inductionloop.getLastStepVehicleIDs(loop[0]))
-                        unique_veh = len(flow_EW - counted_vehicles_EW)
-                        counted_vehicles_EW.update(flow_EW)
-                        unique_veh_EW += unique_veh
-                    if loop[1] == 'N' or loop[1] == 'S':
-                        flow_NS = set(traci.inductionloop.getLastStepVehicleIDs(loop[0]))
-                        unique_veh = len(flow_NS - counted_vehicles_NS)
-                        counted_vehicles_NS.update(flow_NS)
-                        unique_veh_NS += unique_veh
-                flow_rate_NS[light].append(unique_veh_NS)
-                flow_rate_EW[light].append(unique_veh_EW)
+                # for loop in closest_loops_dict[light]:
+                #     if loop[1] == 'E' or loop[1] == 'W':
+                #         flow_EW = set(traci.inductionloop.getLastStepVehicleIDs(loop[0]))
+                #         unique_veh = len(flow_EW - counted_vehicles_EW)
+                #         counted_vehicles_EW.update(flow_EW)
+                #         unique_veh_EW += unique_veh
+                #     if loop[1] == 'N' or loop[1] == 'S':
+                #         flow_NS = set(traci.inductionloop.getLastStepVehicleIDs(loop[0]))
+                #         unique_veh = len(flow_NS - counted_vehicles_NS)
+                #         counted_vehicles_NS.update(flow_NS)
+                #         unique_veh_NS += unique_veh
+                # flow_rate_NS[light].append(unique_veh_NS)
+                # flow_rate_EW[light].append(unique_veh_EW)
 
                 light_times[light] -= 1
 
 
                 # IF LIGHT IS YELLOW AND TIME IS UP, SELECT ACTION
-                if light_times[light] == 0 and 'y' in current_phase[light]:
+                if light_times[light] == 1 and 'y' in current_phase[light]:
                     # GET STATE VALUES IN FORM [Edge1_value, Edge2_value, ...]
                     # Look into normalizing the state values [0, 1]
                     # Look into getting traffic flow for state value - possible average of the flow in both directions
@@ -512,7 +528,7 @@ def main():
                     # REWARD FUNCTION WITH VARYING WEIGHTS ON EACH VALUE
                     reward = -1 * (round(1*max_wait + 1*vehicle_total + 0.05*S_max_wait + 0.05*S_vehicle_total, 2))
                     # print(f"Reward: {reward}")
-                    reward_norm = 2 / (1 + np.exp(-reward)) - 2
+                    # reward_norm = 2 / (1 + np.exp(-reward)) - 2
 
                     # Look into normalizing the reward [-1, 0]
                     # Look into getting traffic flow for reward value - possible average of the flow in both directions
@@ -530,23 +546,26 @@ def main():
                     adjust_traffic_light(light, actions[light][action][0], actions[light][action][1])
                     current_duration[light] = actions[light][action][0]
                     current_phase[light] = actions[light][action][1]
-                    light_times[light] = (current_duration[light] / 0.25) - 1
+                    light_times[light] = (current_duration[light]) - 1
+                    # light_times[light] = (current_duration[light] / 0.25) - 1
 
                     # LEARN
-                    agent.learn(light_id)
-                    loss = agent.learn(light_id)
-                    if loss == None:
-                        loss = 0.0
-                    # print(f"Loss: {loss}")
-                    total_loss.append(loss)
-                    continue
+                    if train:
+                        agent.learn(light_id)
+                        loss = agent.learn(light_id)
+                        if loss == None:
+                            loss = 0.0
+                        # print(f"Loss: {loss}")
+                        total_loss.append(loss)
+                        continue
 
                 # IF LIGHT IS GREEN AND TIME IS UP AND NOT IN INITIAL STATE, SELECT CORRESPONDING YELLOW LIGHT ACTION   
                 elif 'G' in current_phase[light] and light_times[light] == 0 and init_action[light] != 1 or \
                          'g' in current_phase[light] and light_times[light] == 0 and init_action[light] != 1:
                     adjust_traffic_light(light, actions[light][action][2], actions[light][action][3])  
                     current_phase[light] = actions[light][action][3]
-                    light_times[light] = (actions[light][action][2] / 0.25) - 1
+                    light_times[light] = (actions[light][action][2]) - 1
+                    # light_times[light] = (actions[light][action][2] / 0.25) - 1
                     continue
                 
                 # IF LIGHT IS GREEN AND TIME IS UP AND IN INITIAL STATE, SELECT INITIAL YELLOW LIGHT ACTION
@@ -554,7 +573,8 @@ def main():
                        ('g' in current_phase[light] and light_times[light] == 0 and init_action[light] == 1):
                     adjust_traffic_light(light, 5, initial_yellow_phase[light])
                     current_phase[light] = initial_yellow_phase[light]
-                    light_times[light] = (5 / 0.25) - 1
+                    light_times[light] = (5) - 1
+                    # light_times[light] = (5 / 0.25) - 1
                     init_action[light] = 0
                     continue
 
@@ -563,74 +583,112 @@ def main():
             agent.save_checkpoint()
 
         # GET AVERAGES PERFORMANCE EVALUATION
-        average_max_wait = mean(wait_total)
-        average_count = mean(count_total)
-        # average_loss = mean(total_loss)
-        average_loss = mean([loss.item() if torch.is_tensor(loss) else loss for loss in total_loss])
+        if train:
+            average_max_wait = mean(wait_total)
+            average_count = mean(count_total)
+            # average_loss = mean(total_loss)
+            average_loss = mean([loss.item() if torch.is_tensor(loss) else loss for loss in total_loss])
 
         # SAVING BEST MODEL
-        if average_max_wait < best_time:
-            best_time = average_max_wait
-            agent.save_model("BigGridTest_model")
+        if train:
+            if average_max_wait < best_time:
+                best_time = average_max_wait
+                agent.save_model(model_name)
 
         # CLOSE SUMO FOR NEXT EPOCH
         traci.close()
+        if not train:
+            break
+
+
 
         # APPEND AVERAGES FOR PLOT
-        waiting_time.append(average_max_wait)
-        waiting_ammt.append(average_count)
-        loss_total.append(average_loss)
-        print(f"Average waiting time: {round(average_max_wait,2)} | Average vehicle count: {round(average_count)}")
-        print(f"Average loss: {round(average_loss, 2)}")
-        print("\n")
+        if train:
+            waiting_time.append(average_max_wait)
+            waiting_ammt.append(average_count)
+            loss_total.append(average_loss)
+            print(f"Average waiting time: {round(average_max_wait,2)} | Average vehicle count: {round(average_count)}")
+            print(f"Average loss: {round(average_loss, 2)}")
+            print("\n")
 
     # PLOT RESULTS
-    fig, ax = plt.subplots(2)
-    x = range(1, len(waiting_time) +1)
+    if train:
+        fig, ax = plt.subplots(2)
+        x = range(1, len(waiting_time) +1)
 
-    ax[0].plot(x, waiting_time)
-    ax[0].set_xlabel("Epoch Number")
-    ax[0].set_ylabel("Avg. Waiting Time")
-    ax[0].set_title(f"Total Waiting Time Over {epochs} Epochs")
+        ax[0].plot(x, waiting_time)
+        ax[0].set_xlabel("Epoch Number")
+        ax[0].set_ylabel("Avg. Waiting Time")
+        ax[0].set_title(f"Total Waiting Time Over {epochs} Epochs")
 
-    ax[1].plot(x, waiting_ammt)
-    ax[1].set_xlabel("Epoch Number")
-    ax[1].set_ylabel("Total Waiting Amount")
-    ax[1].set_title(f"Total Waiting Amount Over {epochs} Epochs")
+        ax[1].plot(x, waiting_ammt)
+        ax[1].set_xlabel("Epoch Number")
+        ax[1].set_ylabel("Total Waiting Amount")
+        ax[1].set_title(f"Total Waiting Amount Over {epochs} Epochs")
 
-    fig.suptitle("Traffic Light Control with Neural Networks")
-    # plt.savefig('Data/Figures/First_NN_Test_100_Epochs.png')
-    plt.subplots_adjust(hspace=0.5)
-    # mplcursors.cursor(hover=True)
-    plt.show()
+        fig.suptitle("Traffic Light Control with Neural Networks")
+        # plt.savefig('Data/Figures/First_NN_Test_100_Epochs.png')
+        plt.subplots_adjust(hspace=0.5)
+        # mplcursors.cursor(hover=True)
+        plt.show()
 
-    # PLOTTING LOSS OVER EPOCHS
-    plt.figure()
-    plt.plot(range(1, len(loss_total)+1), loss_total)
-    plt.xlabel("Epoch Number")
-    plt.ylabel("Loss")
-    plt.title(f"Loss Over {epochs} Epochs")
-    plt.show()
+        # PLOTTING LOSS OVER EPOCHS
+        plt.figure()
+        plt.plot(range(1, len(loss_total)+1), loss_total)
+        plt.xlabel("Epoch Number")
+        plt.ylabel("Loss")
+        plt.title(f"Loss Over {epochs} Epochs")
+        plt.show()
 
-    # PLOTTING TRAFFIC FLOW RATES FOR EACH LIGHT
-    for light in lights:
-        plt.figure(figsize=(10, 5))
-        # Convert the flow rates to pandas Series
-        flow_rate_EW_series = pd.Series(flow_rate_EW[light])
-        flow_rate_NS_series = pd.Series(flow_rate_NS[light])
-        
-        # Calculate the rolling averages
-        rolling_avg_EW = flow_rate_EW_series.rolling(window=38).mean()
-        rolling_avg_NS = flow_rate_NS_series.rolling(window=37).mean()
-        
-        plt.stackplot(range(1, step+1), rolling_avg_EW, rolling_avg_NS, labels=['East-West', 'North-South'])
-        plt.title(f'Rolling average traffic flow for light {light}')
-        plt.xlabel('Time step')
-        plt.ylabel('Flow rate')
-        plt.legend(loc='upper left')
+        # PLOTTING TRAFFIC FLOW RATES FOR EACH LIGHT
+        # for light in lights:
+        #     plt.figure(figsize=(10, 5))
+        #     # Convert the flow rates to pandas Series
+        #     flow_rate_EW_series = pd.Series(flow_rate_EW[light])
+        #     flow_rate_NS_series = pd.Series(flow_rate_NS[light])
+            
+        #     # Calculate the rolling averages
+        #     rolling_avg_EW = flow_rate_EW_series.rolling(window=38).mean()
+        #     rolling_avg_NS = flow_rate_NS_series.rolling(window=37).mean()
+            
+        #     plt.stackplot(range(1, step+1), rolling_avg_EW, rolling_avg_NS, labels=['East-West', 'North-South'])
+        #     plt.title(f'Rolling average traffic flow for light {light}')
+        #     plt.xlabel('Time step')
+        #     plt.ylabel('Flow rate')
+        #     plt.legend(loc='upper left')
 
-    plt.show() 
+        # plt.show() 
+
+# OPTIONS (CUS WHY NOT)
+def get_options():
+    optParser = optparse.OptionParser() 
+    optParser.add_option(
+        "-m",
+        dest='model_name',
+        type='string',
+        default="model",
+        help="name of model",
+    )
+    optParser.add_option(
+        "--train",
+        action = 'store_true',
+        default=False,
+        help="training or testing",
+    )
+    optParser.add_option(
+        "-e",
+        dest='epochs',
+        type='int',
+        default=50,
+        help="Number of epochs",
+    )
+    options, args = optParser.parse_args()
+    return options
 
 # RUN MAIN FUNCTION
 if __name__ == "__main__":
-    main()
+    options = get_options()
+    model_name = options.model_name
+    train = options.train
+    epochs = options.epochs
+    main(train=train, model_name=model_name, epochs=epochs)

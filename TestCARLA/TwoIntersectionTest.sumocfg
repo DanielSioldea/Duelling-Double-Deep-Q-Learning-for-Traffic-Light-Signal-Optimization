@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- generated on 2024-06-12 16:43:21 by Eclipse SUMO sumo Version 1.19.0
+-->
+
+<configuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/sumoConfiguration.xsd">
+
+    <input>
+        <net-file value="TwoIntersectionTest.net.xml"/>
+        <route-files value="TwoIntersectionTest-test.rou.xml"/>
+    </input>
+
+    <time>
+        <begin value="0" synonymes="b" type="TIME" help="Defines the begin time in seconds; The simulation starts at this time"/>
+        <end value="750" synonymes="e" type="TIME" help="Defines the end time in seconds; The simulation ends at this time"/>
+        <step-length value="1" />
+    </time>
+
+</configuration>
