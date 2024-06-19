@@ -54,49 +54,45 @@ def surrounding_cont_edges(target_light, light_list, distance_buffer=500):
 
     return surrounding_edges 
 
-# FUNCTION TO GET QUEUE INFORMATION FOR A GIVEN EDGE
 def queue_info(edges):
-    vehicles_per_edge = dict()
-    vehicle_id = dict()
-    vehicle_wait_time = dict()
-    max_wait_time = dict()
+    vehicles_per_edge_NS = vehicles_per_edge_EW = 0
+    max_wait_time_NS = max_wait_time_EW = 0
+
     for i in edges:
-        vehicles_per_edge[i] = 0
-        vehicle_wait_time[i] = 0
-        max_wait_time[i] = 0
-        #vehicles_per_edge[i] = traci.edge.getLastStepHaltingNumber(i)
-        vehicle_id[i] = traci.edge.getLastStepVehicleIDs(i)
-        for v in vehicle_id[i]:
+        vehicle_id = traci.edge.getLastStepVehicleIDs(i)
+        for v in vehicle_id:
             lane_id = traci.vehicle.getLaneID(v)
             lane_len = traci.lane.getLength(lane_id)
             veh_position = traci.vehicle.getLanePosition(v)
             if lane_len - veh_position <= 50:
-                vehicles_per_edge[i] += 1
+                lane_shape = traci.lane.getShape(lane_id)
+                start, end = lane_shape[0], lane_shape[-1]
+                dx = end[0] - start[0]
+                dy = end[1] - start[1]
+                angle = math.atan2(dy, dx)  # Angle in radians
+                angle = math.degrees(angle) % 360
+
+                direction = None
+                if 45 <= angle < 135:
+                    direction = "N"
+                elif 135 <= angle < 225:
+                    direction = "W"
+                elif 225 <= angle < 315:
+                    direction = "S"
+                else:
+                    direction = "E"
+
                 current_wait_time = traci.vehicle.getWaitingTime(v)
-                vehicle_wait_time[i] += current_wait_time
-                if current_wait_time > max_wait_time[i]:
-                    max_wait_time[i] = current_wait_time
+                if direction in ["N", "S"]:
+                    vehicles_per_edge_NS += 1
+                    if current_wait_time > max_wait_time_NS:
+                        max_wait_time_NS = current_wait_time
+                else:  # direction in ["E", "W"]
+                    vehicles_per_edge_EW += 1
+                    if current_wait_time > max_wait_time_EW:
+                        max_wait_time_EW = current_wait_time
 
-    return vehicles_per_edge, vehicle_wait_time, max_wait_time
-
-# ACTION SELECTION FUNCTION
-# def select_action_list(light, target_edges, current_phase):
-#     actions = []
-#     if len(target_edges) == 4:
-#         if len(current_phase) == 16:
-#             actions = al.actions_4_way_15_idx
-#         elif len(current_phase) == 15:
-#             actions = al.actions_4_way_14_idx
-#         elif len(current_phase) == 14:
-#             actions = al.actions_4_way_13_idx
-#         else:
-#             actions = al.actions_4_way_11_idx
-#     elif len(target_edges) == 3:
-#         if len(current_phase) == 8:
-#             actions = al.actions_3_way_7_idx
-#         else:
-#             actions = al.actions_3_way_8_idx
-#     return actions
+    return vehicles_per_edge_NS, vehicles_per_edge_EW, max_wait_time_NS, max_wait_time_EW
 
 # ADJUST TRAFFIC LIGHTS
 def adjust_traffic_light(junction, junc_time, junc_state):
@@ -168,7 +164,7 @@ class TrafficController(nn.Module):
         self.device = ("cuda" if torch.cuda.is_available() else "cpu")
         self.to(self.device)
 
-        print(f"Network is using {self.device} device.")
+        # print(f"Network is using {self.device} device.")
     
     # DEFINE HOW NN FEEDS FORWARD INTO LAYERS
     def forward(self, x):
@@ -345,6 +341,10 @@ def main(train=True, model_name="model", epochs=50):
     
     lights = traci.trafficlight.getIDList() 
     print(f"Light IDs: {lights}")
+    get_phase = traci.trafficlight.getPhase(lights[1])
+    print(f"Phase: {get_phase}")
+    logics = traci.trafficlight.getAllProgramLogics(lights[0])
+    print(f"Logics: {logics}")
     light_num = list(range(len(lights)))
     print(f"Light Numbers: {light_num}")
     # end_time = traci.simulation.getEndTime()/0.25
@@ -479,19 +479,21 @@ def main(train=True, model_name="model", epochs=50):
 
             for light_id, light in enumerate(lights):                  
                 # TARGET EDGE QUEUE INFORMATION
-                vehicles_per_edge, vehicle_wait_time, max_wait_time = queue_info(target_edges[light])
+                vehicles_per_edge_NS, vehicles_per_edge_EW, max_wait_time_NS, max_wait_time_EW = queue_info(target_edges[light])
+                # print(f"Vehicles per edge: {vehicles_per_edge}")
 
                 # GET TOTAL VEHICLES AND MAX WAIT TIME
-                vehicle_total = sum(vehicles_per_edge.values())
+                vehicle_total = vehicles_per_edge_NS + vehicles_per_edge_EW
+                # print(f"Vehicle total: {vehicle_total}")
                 count_total.append(vehicle_total)
 
-                max_wait = sum(max_wait_time.values())
+                max_wait = max_wait_time_NS + max_wait_time_EW
                 wait_total.append(max_wait)
 
                 # # SURROUNDING EDGE QUEUE INFORMATION
-                S_vehicles_per_edge, S_vehicle_wait_time, S_max_wait_time = queue_info(surrounding_edges[light])
-                S_vehicle_total = sum(S_vehicles_per_edge.values())
-                S_max_wait = sum(S_max_wait_time.values())
+                S_vehicles_per_edge_NS, S_vehicles_per_edge_EW, S_max_wait_time_NS, S_max_wait_time_EW = queue_info(surrounding_edges[light])
+                # S_vehicle_total = sum(S_vehicles_per_edge_NS, S_vehicles_per_edge_EW)
+                # S_max_wait = sum(S_max_wait_time_NS, S_max_wait_time_EW)
 
                 # SET UNIQUE VEHICLE COUNTS TO 0
                 unique_veh_EW = 0
@@ -519,14 +521,16 @@ def main(train=True, model_name="model", epochs=50):
                     # GET STATE VALUES IN FORM [Edge1_value, Edge2_value, ...]
                     # Look into normalizing the state values [0, 1]
                     # Look into getting traffic flow for state value - possible average of the flow in both directions
-                    state_ = list(vehicles_per_edge.values()) + list(max_wait_time.values()) \
-                                + list(S_vehicles_per_edge.values()) + list(S_max_wait_time.values())
+                    state_ = [vehicles_per_edge_NS, max_wait_time_NS, vehicles_per_edge_EW,  max_wait_time_EW, \
+                              S_vehicles_per_edge_NS, S_max_wait_time_NS, S_vehicles_per_edge_EW, S_max_wait_time_EW]
                     state_ += [0] * (max_state_size - len(state_))
                     state = prev_state[light_id]
                     prev_state[light_id] = state_
 
                     # REWARD FUNCTION WITH VARYING WEIGHTS ON EACH VALUE
-                    reward = -1 * (round(1*max_wait + 1*vehicle_total + 0.05*S_max_wait + 0.05*S_vehicle_total, 2))
+                    # reward = -1 * (round(1*max_wait + 1*vehicle_total + 0.05*S_max_wait + 0.05*S_vehicle_total, 2))
+                    reward = -1 * (1*vehicles_per_edge_NS + 0.6*max_wait_time_NS + 1*vehicles_per_edge_EW + 0.6*max_wait_time_EW \
+                                + 0.05*S_vehicles_per_edge_NS + 0.05*S_max_wait_time_NS + 0.05*S_vehicles_per_edge_EW + 0.05*S_max_wait_time_EW)
                     # print(f"Reward: {reward}")
                     # reward_norm = 2 / (1 + np.exp(-reward)) - 2
 
@@ -540,6 +544,7 @@ def main(train=True, model_name="model", epochs=50):
 
                     # CHOOSE ACTION
                     action = agent.choose_action(state_)
+                    # print(f"Action: {action}")
                     prev_action[light_id] = action
 
                     # ADJUST TRAFFIC LIGHTS
@@ -594,6 +599,7 @@ def main(train=True, model_name="model", epochs=50):
             if average_max_wait < best_time:
                 best_time = average_max_wait
                 agent.save_model(model_name)
+                print("Model file overwritted with new best model.")
 
         # CLOSE SUMO FOR NEXT EPOCH
         traci.close()
@@ -629,7 +635,6 @@ def main(train=True, model_name="model", epochs=50):
         fig.suptitle("Traffic Light Control with Neural Networks")
         # plt.savefig('Data/Figures/First_NN_Test_100_Epochs.png')
         plt.subplots_adjust(hspace=0.5)
-        # mplcursors.cursor(hover=True)
         plt.show()
 
         # PLOTTING LOSS OVER EPOCHS
