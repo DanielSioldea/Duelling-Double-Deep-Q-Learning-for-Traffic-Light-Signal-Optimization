@@ -75,3 +75,11 @@ Play simulation to verify it works.
 # Editing SUMO light orientation:
 Go into net.xml file and locate the "linkIndex" values of the desired light.<br>
 Re-arrange index to account for action space choices.
+
+# Train model
+Select the desired SUMO configuration file in the two locations in the main function.
+Run the command: <br> ```python nn_targ.py --train -m model_name -e #_of_epochs```<br>
+This will run the algorithm for the desired number of epochs (default 50), and saves the model as a model_name.bin file in the Models folder
+
+# Test model
+Run the command <br> ```python nn_targ.py -m model_name ``` <br>
