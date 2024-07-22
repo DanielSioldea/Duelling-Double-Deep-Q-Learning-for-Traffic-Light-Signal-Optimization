@@ -15,6 +15,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import action_list as al
+import action_list_TLS
 
 # SET UP SUMO TRACI CONNECTION
 if 'SUMO_HOME' in os.environ:
@@ -163,8 +164,6 @@ class TrafficController(nn.Module):
         # SELECT GPU OR CPU DEPENDING ON WHAT IS AVAILABLE
         self.device = ("cuda" if torch.cuda.is_available() else "cpu")
         self.to(self.device)
-
-        # print(f"Network is using {self.device} device.")
     
     # DEFINE HOW NN FEEDS FORWARD INTO LAYERS
     def forward(self, x):
@@ -217,7 +216,6 @@ class TrafficAgent:
                 'new_state': np.zeros((self.mem_size, self.input_size), dtype=np.float32),
                 'action': np.zeros(self.mem_size, dtype=np.int64),
                 'reward': np.zeros(self.mem_size, dtype=np.float32),
-                # 'terminal': np.zeros(self.mem_size, dtype=np.bool_),
                 'terminal': np.zeros(self.mem_size, dtype=np.bool_),
                 'mem_cntr': 0
             }
@@ -244,16 +242,12 @@ class TrafficAgent:
         return states, actions, rewards, new_states, dones 
 
     def choose_action(self, observation):
-        # actions = None
-        # state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
         if np.random.random() > self.epsilon:
             state = torch.tensor([observation], dtype=torch.float32).to(self.q_eval.device)
             _, advantage = self.q_eval.forward(state)
-            # print(f"Q-values: {actions}")
             action = torch.argmax(advantage).item()
         else:
             action = np.random.choice(self.action_space)
-        # print(f"Q-values: {actions}, chosen action: {action}")
         return action
     
     def replace_target_network(self):
@@ -274,8 +268,6 @@ class TrafficAgent:
 
     def learn(self, light):
         self.q_eval.optim.zero_grad()
-        # print(f"Memory counter: {self.memory[light]['mem_cntr']}")
-        # print(f"Batch size: {self.batch_size}")
         if self.memory[light]['mem_cntr'] < self.batch_size:
             return
         
@@ -295,7 +287,6 @@ class TrafficAgent:
         V_s_, A_s_ = self.q_next.forward(new_states_T)
         V_s_eval, A_s_eval = self.q_eval.forward(new_states_T)
 
-        # q_pred = torch.add(V_s, (A_s - A_s.mean(dim=1, keepdim=True))).gather(1, actions_T.unsqueeze(-1)).squeeze(-1)
         q_pred = torch.add(V_s, (A_s - A_s.mean(dim=1, keepdim=True)))[indicies, actions_T]
         q_next = torch.add(V_s_, (A_s_ - A_s_.mean(dim=1, keepdim=True)))
         q_eval = torch.add(V_s_eval, (A_s_eval - A_s_eval.mean(dim=1, keepdim=True)))
@@ -307,7 +298,6 @@ class TrafficAgent:
         
 
         loss = self.q_eval.loss(q_target, q_pred).to(self.q_eval.device)
-        # print(f"Loss: {loss}")
         loss.backward()
         self.q_eval.optim.step()
         self.learn_step_counter += 1
@@ -326,7 +316,8 @@ def main(train=True, model_name="model", epochs=50):
     # traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
     # traci.start([sumoBinary, "-c", "Data\Test6\StoneChurch.sumocfg", "--no-warnings"])
     # traci.start([sumoBinary, "-c", "Data\TestCARLA\RymalRoadSimplified.sumocfg", "--no-warnings"])
-    traci.start([sumoBinary, "-c", "Data\TestCARLA\TwoIntersectionTest.sumocfg", "--no-warnings"])
+    # traci.start([sumoBinary, "-c", "Data\TestCARLA\TwoIntersectionTest.sumocfg", "--no-warnings"])
+    traci.start([sumoBinary, "-c", "Data\ThesisMapFull\ThesisMapFull_Draft2.sumocfg", "--no-warnings"])
 
     # DEFINE NETWORK PARAMETERS
     waiting_time = list()
@@ -338,8 +329,12 @@ def main(train=True, model_name="model", epochs=50):
     init_action = {}
     best_time = np.inf
 
-    
+    print("can something print here?")
     lights = traci.trafficlight.getIDList() 
+    specific_lights = {'26', '85', '142', '68', '42'}
+    # print(f"Light IDs: {lights}")
+    print("can something print here too?")
+
     print(f"Light IDs: {lights}")
     get_phase = traci.trafficlight.getPhase(lights[1])
     print(f"Phase: {get_phase}")
@@ -360,11 +355,12 @@ def main(train=True, model_name="model", epochs=50):
         input_size=max_state_size, 
         hidden1_size=512, 
         hidden2_size=512, 
-        output_size=12, 
+        output_size=6, 
         batch_size=64, 
         lights=light_num)
     
-    for light in lights:
+    for light in specific_lights:
+        print(f"Specific lights are {light}")
         # GET CLOSEST INDUCTION LOOPS
         close_loop = closest_loops(light)
         closest_loops_dict[light] = close_loop[light]
@@ -381,19 +377,8 @@ def main(train=True, model_name="model", epochs=50):
 
     # TRAIN MODEL
     for epoch in tqdm(range(epochs), desc="Epochs"):
-        # print(f"Epoch: {epoch}")
-
-        # # RUN EVERY 5 EPOCHS ON SUMO-GUI
-        # if epoch % 5 == 0:
-        #     sumoBinary = checkBinary('sumo-gui')
-        # else:
-        #     sumoBinary = checkBinary('sumo')
         # OPEN GUI FOR TESTING
         if train:
-            # if epoch == 1 or epoch == 29:
-            #     sumoBinary = checkBinary('sumo-gui')
-            # else:
-            #     sumoBinary = checkBinary('sumo')
             sumoBinary = checkBinary('sumo')
         else:
             sumoBinary = checkBinary('sumo-gui')
@@ -404,7 +389,8 @@ def main(train=True, model_name="model", epochs=50):
         # traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
         # traci.start([sumoBinary, "-c", "Data\Test6\StoneChurch.sumocfg", "--no-warnings"])
         # traci.start([sumoBinary, "-c", "Data\TestCARLA\RymalRoadSimplified.sumocfg", "--no-warnings"])
-        traci.start([sumoBinary, "-c", "Data\TestCARLA\TwoIntersectionTest.sumocfg", "--no-warnings"])
+        # traci.start([sumoBinary, "-c", "Data\TestCARLA\TwoIntersectionTest.sumocfg", "--no-warnings"])
+        traci.start([sumoBinary, "-c", "Data\ThesisMapFull\ThesisMapFull_Draft2.sumocfg", "--no-warnings"])
 
         # INITIALIZE VARIABLES AND LISTS
         step = 0
@@ -420,13 +406,16 @@ def main(train=True, model_name="model", epochs=50):
         target_edges = dict()
         surrounding_edges = dict()
         actions = dict()
+        eastWest = dict()
+        northSouth = dict()
         flow_rate_EW = {light: [] for light in lights}
         flow_rate_NS = {light: [] for light in lights}
         counted_vehicles_EW = set()
         counted_vehicles_NS = set()
 
-        for light_id, light in enumerate(lights):
-           
+        # specific_lights = {'26', '85', '142', '68', '42'}
+        for light_id, light in enumerate(specific_lights):
+            print(f'Getting info for light {light}')
             # GET INITIAL PHASE DURATION; SET STATES TO 0 BEFORE SIMULATION
             light_times[light] = traci.trafficlight.getPhaseDuration(light)
             # light_times[light] = traci.trafficlight.getPhaseDuration(light) / 0.25
@@ -435,13 +424,11 @@ def main(train=True, model_name="model", epochs=50):
 
             # SET INITIAL ACTION
             init_action[light] = 1
-            # print(f"Initial action for light {light} is {init_action[light]}")
 
             # GET CURRENT PHASE DURATION AND STATE
             current_duration[light] = traci.trafficlight.getPhaseDuration(light)
             # current_duration[light] = traci.trafficlight.getPhaseDuration(light) / 0.25
             current_phase[light] = traci.trafficlight.getRedYellowGreenState(light)
-            # print(f"light {light} has a length of {len(current_phase[light])}")
 
             # DEFINE INITIAL YELLOW PHASE 
             initial_yellow_phase[light] = current_phase[light].replace('G', 'y').replace('g', 'y')
@@ -453,22 +440,16 @@ def main(train=True, model_name="model", epochs=50):
             surrounding_edges[light] = surrounding_cont_edges(light, lights)
 
             # SELECT APPROPRIATE ACTION LIST BASED ON LIGHT INDEX COUNT
-            if len(target_edges[light]) == 4:
-                if len(current_phase[light]) == 16:
-                    actions[light] = al.actions_4_way_15_idx
-                elif len(current_phase[light]) == 15:
-                    actions[light] = al.actions_4_way_14_idx
-                elif len(current_phase[light]) == 14:
-                    actions[light] = al.actions_4_way_13_idx
-                else:
-                    actions[light] = al.actions_4_way_11_idx
-            elif len(target_edges[light]) == 3:
-                if len(current_phase[light]) == 8:
-                    actions[light] = al.actions_3_way_7_idx
-                else:
-                    actions[light] = al.actions_3_way_8_idx
-            # print(f"Actions for light {light} are {actions[light]}")
-
+            eastWest['26'] = action_list_TLS.eastWest26
+            northSouth['26'] = action_list_TLS.northSouth26
+            eastWest['85'] = action_list_TLS.eastWest85
+            northSouth['85'] = action_list_TLS.northSouth85
+            eastWest['142'] = action_list_TLS.eastWest142
+            northSouth['142'] = action_list_TLS.northSouth142
+            eastWest['68'] = action_list_TLS.eastWest68
+            northSouth['68'] = action_list_TLS.northSouth68
+            eastWest['42'] = action_list_TLS.eastWest42
+            northSouth['42'] = action_list_TLS.northSouth42
 
         while step <= end_time:
             
@@ -476,15 +457,14 @@ def main(train=True, model_name="model", epochs=50):
             traci.simulationStep()
             step += 1
             # print(f"Step: {step}")
+            
 
-            for light_id, light in enumerate(lights):                  
+            for light_id, light in enumerate(specific_lights):
                 # TARGET EDGE QUEUE INFORMATION
                 vehicles_per_edge_NS, vehicles_per_edge_EW, max_wait_time_NS, max_wait_time_EW = queue_info(target_edges[light])
-                # print(f"Vehicles per edge: {vehicles_per_edge}")
 
                 # GET TOTAL VEHICLES AND MAX WAIT TIME
                 vehicle_total = vehicles_per_edge_NS + vehicles_per_edge_EW
-                # print(f"Vehicle total: {vehicle_total}")
                 count_total.append(vehicle_total)
 
                 max_wait = max_wait_time_NS + max_wait_time_EW
@@ -492,32 +472,19 @@ def main(train=True, model_name="model", epochs=50):
 
                 # # SURROUNDING EDGE QUEUE INFORMATION
                 S_vehicles_per_edge_NS, S_vehicles_per_edge_EW, S_max_wait_time_NS, S_max_wait_time_EW = queue_info(surrounding_edges[light])
-                # S_vehicle_total = sum(S_vehicles_per_edge_NS, S_vehicles_per_edge_EW)
-                # S_max_wait = sum(S_max_wait_time_NS, S_max_wait_time_EW)
-
-                # SET UNIQUE VEHICLE COUNTS TO 0
-                unique_veh_EW = 0
-                unique_veh_NS = 0
-                # GET DIRECTIONAL FLOW RATES FOR EACH LIGHT
-                # for loop in closest_loops_dict[light]:
-                #     if loop[1] == 'E' or loop[1] == 'W':
-                #         flow_EW = set(traci.inductionloop.getLastStepVehicleIDs(loop[0]))
-                #         unique_veh = len(flow_EW - counted_vehicles_EW)
-                #         counted_vehicles_EW.update(flow_EW)
-                #         unique_veh_EW += unique_veh
-                #     if loop[1] == 'N' or loop[1] == 'S':
-                #         flow_NS = set(traci.inductionloop.getLastStepVehicleIDs(loop[0]))
-                #         unique_veh = len(flow_NS - counted_vehicles_NS)
-                #         counted_vehicles_NS.update(flow_NS)
-                #         unique_veh_NS += unique_veh
-                # flow_rate_NS[light].append(unique_veh_NS)
-                # flow_rate_EW[light].append(unique_veh_EW)
 
                 light_times[light] -= 1
 
+                # CHECK IF ANY VEHICLES ARE PRESENT IN OPPOSITE DIRECTION; IF NO ADD MORE TIME TO CURRENT DIRECTION; IF YES CONTINUE
+                if current_phase[light][0] == 'G' and light_times[light] == 0:
+                    if max_wait_time_NS <= 5:
+                        light_times[light] += 3
+                if current_phase[light][0] == 'r' and current_phase[light][5] == 'G' and light_times[light] == 0:
+                    if max_wait_time_EW <= 5:
+                        light_times[light] += 3
 
                 # IF LIGHT IS YELLOW AND TIME IS UP, SELECT ACTION
-                if light_times[light] == 1 and 'y' in current_phase[light]:
+                if light_times[light] == 0 and 'y' in current_phase[light]:
                     # GET STATE VALUES IN FORM [Edge1_value, Edge2_value, ...]
                     # Look into normalizing the state values [0, 1]
                     # Look into getting traffic flow for state value - possible average of the flow in both directions
@@ -528,11 +495,8 @@ def main(train=True, model_name="model", epochs=50):
                     prev_state[light_id] = state_
 
                     # REWARD FUNCTION WITH VARYING WEIGHTS ON EACH VALUE
-                    # reward = -1 * (round(1*max_wait + 1*vehicle_total + 0.05*S_max_wait + 0.05*S_vehicle_total, 2))
                     reward = -1 * (1*vehicles_per_edge_NS + 0.6*max_wait_time_NS + 1*vehicles_per_edge_EW + 0.6*max_wait_time_EW \
                                 + 0.05*S_vehicles_per_edge_NS + 0.05*S_max_wait_time_NS + 0.05*S_vehicles_per_edge_EW + 0.05*S_max_wait_time_EW)
-                    # print(f"Reward: {reward}")
-                    # reward_norm = 2 / (1 + np.exp(-reward)) - 2
 
                     # Look into normalizing the reward [-1, 0]
                     # Look into getting traffic flow for reward value - possible average of the flow in both directions
@@ -548,6 +512,10 @@ def main(train=True, model_name="model", epochs=50):
                     prev_action[light_id] = action
 
                     # ADJUST TRAFFIC LIGHTS
+                    if current_phase[light][0] == 'y':
+                        actions[light] = northSouth[light]
+                    else:
+                        actions[light] = eastWest[light]
                     adjust_traffic_light(light, actions[light][action][0], actions[light][action][1])
                     current_duration[light] = actions[light][action][0]
                     current_phase[light] = actions[light][action][1]
@@ -565,8 +533,8 @@ def main(train=True, model_name="model", epochs=50):
                         continue
 
                 # IF LIGHT IS GREEN AND TIME IS UP AND NOT IN INITIAL STATE, SELECT CORRESPONDING YELLOW LIGHT ACTION   
-                elif 'G' in current_phase[light] and light_times[light] == 0 and init_action[light] != 1 or \
-                         'g' in current_phase[light] and light_times[light] == 0 and init_action[light] != 1:
+                elif 'G' in current_phase[light] and light_times[light] == 0 and init_action[light] != 1:
+
                     adjust_traffic_light(light, actions[light][action][2], actions[light][action][3])  
                     current_phase[light] = actions[light][action][3]
                     light_times[light] = (actions[light][action][2]) - 1
@@ -574,9 +542,10 @@ def main(train=True, model_name="model", epochs=50):
                     continue
                 
                 # IF LIGHT IS GREEN AND TIME IS UP AND IN INITIAL STATE, SELECT INITIAL YELLOW LIGHT ACTION
-                elif ('G' in current_phase[light] and light_times[light] == 0 and init_action[light] == 1) or \
-                       ('g' in current_phase[light] and light_times[light] == 0 and init_action[light] == 1):
+                elif ('G' in current_phase[light] and light_times[light] == 0 and init_action[light] == 1):
+                    # print("we got here")
                     adjust_traffic_light(light, 5, initial_yellow_phase[light])
+                    # print("we got past here")
                     current_phase[light] = initial_yellow_phase[light]
                     light_times[light] = (5) - 1
                     # light_times[light] = (5 / 0.25) - 1
@@ -589,10 +558,15 @@ def main(train=True, model_name="model", epochs=50):
 
         # GET AVERAGES PERFORMANCE EVALUATION
         if train:
-            average_max_wait = mean(wait_total)
-            average_count = mean(count_total)
+            if wait_total is None or len(wait_total) == 0:
+                average_max_wait = 0
+                average_count = 0
+                average_loss = 0
+            else:
+                average_max_wait = mean(wait_total)
+                average_count = mean(count_total)
             # average_loss = mean(total_loss)
-            average_loss = mean([loss.item() if torch.is_tensor(loss) else loss for loss in total_loss])
+                average_loss = mean([loss.item() if torch.is_tensor(loss) else loss for loss in total_loss])
 
         # SAVING BEST MODEL
         if train:

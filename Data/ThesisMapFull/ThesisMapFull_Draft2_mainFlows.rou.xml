@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- generated on 2024-07-18 02:10:34 by Eclipse SUMO netedit Version 1.20.0
+-->
+
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <!-- Vehicles, persons and containers (sorted by depart) -->
+    <flow id="main1" begin="0.00" end="3600.00" probability="0.04">
+        <route edges="25 -3 -7 -16 -2 6 4 -15 -18"/>
+    </flow>
+    <flow id="main2" begin="0.00" end="3600.00" probability="0.04">
+        <route edges="18 15 -4 -6 2 16 7 3 -25"/>
+    </flow>
+    <flow id="main3" begin="0.00" end="3600.00" probability="0.04">
+        <route edges="8 1 7 3 -25"/>
+    </flow>
+    <flow id="main4" begin="0.00" end="3600.00" probability="0.04">
+        <route edges="19 -5 16 7 3 -25"/>
+    </flow>
+    <flow id="main5" begin="0.00" end="3600.00" probability="0.04">
+        <route edges="8 1 -16 -2 6 4 -15 -18"/>
+    </flow>
+    <flow id="main6" begin="0.00" end="3600.00" probability="0.04">
+        <route edges="19 -5 -2 6 4 -15 -18"/>
+    </flow>
+</routes>

@@ -15,6 +15,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import action_list as al
+import action_list_TLS
 
 from nn_targ import TrafficController, TrafficAgent
 
@@ -139,19 +140,26 @@ def closest_loops(light):
 
 def main():
     sumoBinary = checkBinary('sumo-gui')
-    traci.start([sumoBinary, "-c", "Data\TestCARLA\TwoIntersectionTest.sumocfg", "--no-warnings"])
+    # traci.start([sumoBinary, "-c", "Data\Test4\BigGridTest.sumocfg", "--no-warnings"])
+    # traci.start([sumoBinary, "-c", "Data\Test5\Rymal-upperRedHill.sumocfg", "--no-warnings"])
+    # traci.start([sumoBinary, "-c", "Data\TestCARLA\TwoIntersectionTest_Test.sumocfg", "--no-warnings"])
+    # traci.start([sumoBinary, "-c", "Data\ThesisMap\ThesisMap.sumocfg", "--no-warnings"])
+    traci.start([sumoBinary, "-c", "Data\ThesisMapFull\ThesisMapFull_Draft2.sumocfg", "--no-warnings"])
 
     lights = traci.trafficlight.getIDList()
+    specific_lights = {'26', '85', '142', '68', '42'}
+
     light_num = list(range(len(lights)))
     end_time = traci.simulation.getEndTime()
     target_edges = dict()
     surrounding_edges = dict()  
-    # current_duration = dict()
     current_phase = dict()
     actions = dict()
     action = None
     light_times = dict()
     initial_yellow_phase = dict()
+    eastWest = dict()
+    northSouth = dict()
     print(f"Light IDs: {lights}")
     print(f"Light Numbers: {light_num}")
     print(f"End Time: {end_time}")
@@ -164,17 +172,17 @@ def main():
         input_size=max_state_size, 
         hidden1_size=512, 
         hidden2_size=512, 
-        output_size=12, 
+        output_size=6, 
         batch_size=64, 
         lights=light_num)
     
-    model_state_dict = torch.load('Models\TwoIntDirectional.bin')
+    model_state_dict = torch.load('Models/ThesisModel_INDIVIDUAL_ACTIONS.bin')
     agent.q_eval.load_state_dict(model_state_dict)
     print("Model loaded")
 
-    for light in lights:
+    for light in specific_lights:
         target_edges[light] = incoming_cont_edges(light)
-        surrounding_edges[light] = surrounding_cont_edges(light, lights)
+        surrounding_edges[light] = surrounding_cont_edges(light, specific_lights)
         print(f"Target Edges for light {light}: {target_edges[light]}")
         print(f"Surrounding Edges for light {light}: {surrounding_edges[light]}")
         # GET CURRENT PHASE DURATION AND STATE
@@ -184,39 +192,45 @@ def main():
         # DEFINE INITIAL YELLOW PHASE 
         initial_yellow_phase[light] = current_phase[light].replace('G', 'y').replace('g', 'y')
         # SELECT APPROPRIATE ACTION LIST BASED ON LIGHT INDEX COUNT
-        if len(target_edges[light]) == 4:
-            if len(current_phase[light]) == 16:
-                actions[light] = al.actions_4_way_15_idx
-            elif len(current_phase[light]) == 15:
-                actions[light] = al.actions_4_way_14_idx
-            elif len(current_phase[light]) == 14:
-                actions[light] = al.actions_4_way_13_idx
-            else:
-                actions[light] = al.actions_4_way_11_idx
-        elif len(target_edges[light]) == 3:
-            if len(current_phase[light]) == 8:
-                actions[light] = al.actions_3_way_7_idx
-            else:
-                actions[light] = al.actions_3_way_8_idx
+        eastWest['26'] = action_list_TLS.eastWest26
+        northSouth['26'] = action_list_TLS.northSouth26
+        eastWest['85'] = action_list_TLS.eastWest85
+        northSouth['85'] = action_list_TLS.northSouth85
+        eastWest['142'] = action_list_TLS.eastWest142
+        northSouth['142'] = action_list_TLS.northSouth142
+        eastWest['68'] = action_list_TLS.eastWest68
+        northSouth['68'] = action_list_TLS.northSouth68
+        eastWest['42'] = action_list_TLS.eastWest42
+        northSouth['42'] = action_list_TLS.northSouth42
+        
     step = 0
 
     while step <= end_time:
         traci.simulationStep()
+        if traci.simulation.getTime() == 240:
+            print(f'EGO Vehicles released.')
         step += 1
-        print(f"Step: {step}")
+        # print(f"Step: {step}")
 
-        for light_id, light in enumerate(lights):
+        for light in specific_lights:
             # GET PHASE OF EACH LIGHT
             light_times[light] -= 1
-            print(f"Light {light} has phase {current_phase[light]}")
-            print(f"Light {light} has duration {light_times[light]}")
-            if 'y' in current_phase[light] and light_times[light] == 0:
-                print(f"Last second of yellow phase for light {light}")
-                # TARGET EDGE QUEUE INFORMATION
-                vehicles_per_edge_NS, vehicles_per_edge_EW, max_wait_time_NS, max_wait_time_EW = queue_info(target_edges[light])
+   
+            # TARGET EDGE QUEUE INFORMATION
+            vehicles_per_edge_NS, vehicles_per_edge_EW, max_wait_time_NS, max_wait_time_EW = queue_info(target_edges[light])
 
-                # SURROUNDING EDGE QUEUE INFORMATION
-                S_vehicles_per_edge_NS, S_vehicles_per_edge_EW, S_max_wait_time_NS, S_max_wait_time_EW = queue_info(surrounding_edges[light])
+            # SURROUNDING EDGE QUEUE INFORMATION
+            S_vehicles_per_edge_NS, S_vehicles_per_edge_EW, S_max_wait_time_NS, S_max_wait_time_EW = queue_info(surrounding_edges[light])
+
+            # CHECK FOR ANY VEHICLES IN OPPOISTE DIRECTION; IF NONE CONTINUE GREEN FOR CURRENT DIRECTION; IF THERE ARE VEHICLES, CONTINUE
+            if current_phase[light][0] == 'G' and light_times[light] == 0:
+                    if max_wait_time_NS <= 5:
+                        light_times[light] += 3
+            if current_phase[light][0] == 'r' and current_phase[light][5] == 'G' and light_times[light] == 0:
+                    if max_wait_time_EW <= 5:
+                        light_times[light] += 3
+
+            if 'y' in current_phase[light] and light_times[light] == 0:
 
                 # GET STATE OF TRAFFIC LIGHT
                 state = [vehicles_per_edge_NS, max_wait_time_NS, vehicles_per_edge_EW,  max_wait_time_EW, \
@@ -229,47 +243,29 @@ def main():
                 q_values = predicted_phase[1]
 
                 # GET ACTION
-                print(f"Selecting action for light {light}")
                 action = torch.argmax(q_values).item()
-                print(f"Action for light {light} is: {action}")
 
                 # ADJUST TRAFFIC LIGHT
+                # CHECK WHICH DIRECTION JUST HAD A YELLOW LIGHT, SELECT ACTION FOR OPPOSITE DIRECTION
+                if current_phase[light][0] == 'y':
+                    actions[light] = northSouth[light]
+                else:
+                    actions[light] = eastWest[light]
                 adjust_traffic_light(light, actions[light][action][0], actions[light][action][1])
                 current_phase[light] = actions[light][action][1]
                 light_times[light] = actions[light][action][0]
-                print(f'Light {light} now has phase {traci.trafficlight.getRedYellowGreenState(light)}')
 
             elif action is not None and 'G' in current_phase[light] and light_times[light] == 0:
-                print(f'Last second of green phase for light {light}')
                 adjust_traffic_light(light, actions[light][action][2], actions[light][action][3])
                 current_phase[light] = actions[light][action][3]
                 light_times[light] = actions[light][action][2]
-                print(f'Light {light} now has phase {current_phase[light]}')
-                print(f'Light {light} now has duration {light_times[light]}')
                 continue
             
             elif action is None and 'G' in current_phase[light] and light_times[light] == 0:
-                print("Selecting initial yellow phase")
                 adjust_traffic_light(light, 5, initial_yellow_phase[light])
                 current_phase[light] = initial_yellow_phase[light]
                 light_times[light] = 5
-                print(f'Light {light} now has phase {current_phase[light]}')
-                print(f'Light {light} now has duration {light_times[light]}')
                 continue
-
-            '''
-            Script currently uses trained model to determine actions for each light. 
-
-            TO-DO: 
-            -Implement action lists, and figure out a method to only update 
-            the traffic lights when the opposing phase has completed (ie: last second 
-            on yellow light, or somehow right before the next light turns green). [Done]
-            -Test to see if model works and can predict lights. [Kinda]
-            -Figure out how to implement into CARLA run_syncronization.py script to use 
-            this method to control traffic lights. 
-            -Figure out how to use carla.TrafficLight set_state() method to set the
-            CARLA lights to the same state as the SUMO lights. 
-            '''        
 
     traci.close()
 
