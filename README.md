@@ -1,4 +1,4 @@
-# DDQN Traffic Management System Instructions
+# DDDQN Traffic Management System Instructions
 
 # Install python version 3.9.13 or later:
 https://www.python.org/downloads/
